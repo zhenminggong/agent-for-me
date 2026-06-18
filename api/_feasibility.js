@@ -1,0 +1,184 @@
+/**
+ * AI 可行性裁决 — 结构化 JSON 解析与校验
+ * 供 /api/chat 在 advisor Agent 返回后规范化数据。
+ */
+
+const VERDICT_LABELS = {
+  worth_doing: "能做且值得",
+  defer: "能做但不值",
+  reject: "不建议用 AI",
+};
+
+const DIMENSION_IDS = [
+  "taskFit",
+  "dataReady",
+  "riskTolerance",
+  "frequencyScale",
+  "roi",
+  "alternativeCost",
+];
+
+/**
+ * 从模型原始文本中提取 JSON 对象
+ * @param {string} raw
+ * @returns {object|null}
+ */
+function extractJsonObject(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 将单项得分限制在 1–5
+ * @param {unknown} value
+ * @returns {number}
+ */
+function clampScore(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 3;
+  return Math.min(5, Math.max(1, Math.round(n)));
+}
+
+/**
+ * 规范化维度数组
+ * @param {unknown} dimensions
+ * @param {Array<{id:string,label:string}>} template
+ */
+function normalizeDimensions(dimensions, template) {
+  const list = Array.isArray(dimensions) ? dimensions : [];
+  const byId = Object.fromEntries(list.map((d) => [d?.id, d]));
+
+  return template.map(({ id, label }) => {
+    const item = byId[id] || {};
+    return {
+      id,
+      label: typeof item.label === "string" && item.label.trim() ? item.label : label,
+      score: clampScore(item.score),
+      reason: typeof item.reason === "string" ? item.reason.trim() : "",
+    };
+  });
+}
+
+/**
+ * 校验并规范化完整裁决报告
+ * @param {unknown} raw
+ * @returns {object|null}
+ */
+export function parseFeasibilityReport(raw) {
+  const data = typeof raw === "string" ? extractJsonObject(raw) : raw;
+  if (!data || typeof data !== "object") return null;
+
+  const verdict = ["worth_doing", "defer", "reject"].includes(data.verdict)
+    ? data.verdict
+    : "defer";
+
+  const gate1Template = [
+    { id: "taskFit", label: "任务匹配度" },
+    { id: "dataReady", label: "数据就绪度" },
+    { id: "riskTolerance", label: "容错与安全" },
+    { id: "frequencyScale", label: "频次与标准化" },
+  ];
+
+  const gate2Template = [
+    { id: "roi", label: "投入产出比" },
+    { id: "alternativeCost", label: "相对替代方案" },
+  ];
+
+  const gate1Dims = normalizeDimensions(data.gate1?.dimensions, gate1Template);
+  const gate2Dims = normalizeDimensions(data.gate2?.dimensions, gate2Template);
+  const allDims = [...gate1Dims, ...gate2Dims];
+
+  const gate1Avg =
+    gate1Dims.reduce((sum, d) => sum + d.score, 0) / gate1Dims.length;
+  const gate2Avg =
+    gate2Dims.reduce((sum, d) => sum + d.score, 0) / gate2Dims.length;
+
+  const gate1Passed =
+    typeof data.gate1?.passed === "boolean"
+      ? data.gate1.passed
+      : gate1Avg >= 3 && gate1Dims.every((d) => d.score >= 2);
+
+  const gate2Passed =
+    typeof data.gate2?.passed === "boolean"
+      ? data.gate2.passed
+      : gate2Avg >= 3;
+
+  const toList = (arr) =>
+    (Array.isArray(arr) ? arr : [])
+      .filter((s) => typeof s === "string" && s.trim())
+      .map((s) => s.trim())
+      .slice(0, 5);
+
+  return {
+    verdict,
+    verdictLabel:
+      typeof data.verdictLabel === "string" && data.verdictLabel.trim()
+        ? data.verdictLabel.trim()
+        : VERDICT_LABELS[verdict],
+    summary:
+      typeof data.summary === "string" && data.summary.trim()
+        ? data.summary.trim()
+        : VERDICT_LABELS[verdict],
+    confidence: ["low", "medium", "high"].includes(data.confidence)
+      ? data.confidence
+      : "medium",
+    gate1: {
+      passed: gate1Passed,
+      summary:
+        typeof data.gate1?.summary === "string" ? data.gate1.summary.trim() : "",
+      averageScore: Math.round(gate1Avg * 10) / 10,
+      dimensions: gate1Dims,
+    },
+    gate2: {
+      passed: gate2Passed,
+      summary:
+        typeof data.gate2?.summary === "string" ? data.gate2.summary.trim() : "",
+      averageScore: Math.round(gate2Avg * 10) / 10,
+      dimensions: gate2Dims,
+    },
+    overallScore:
+      Math.round(
+        (allDims.reduce((sum, d) => sum + d.score, 0) / allDims.length) * 10
+      ) / 10,
+    risks: toList(data.risks),
+    alternatives: toList(data.alternatives),
+    questions: toList(data.questions),
+    nextSteps: toList(data.nextSteps),
+  };
+}
+
+/**
+ * 生成纯文本摘要（结构化解析失败时的兜底展示）
+ * @param {object} report
+ * @returns {string}
+ */
+export function buildFeasibilitySummary(report) {
+  const lines = [
+    `【${report.verdictLabel}】${report.summary}`,
+    "",
+    `综合得分：${report.overallScore}/5`,
+  ];
+  if (report.gate1.summary) lines.push("", `闸门一：${report.gate1.summary}`);
+  if (report.gate2.summary) lines.push(`闸门二：${report.gate2.summary}`);
+  if (report.nextSteps.length) {
+    lines.push("", "建议下一步：");
+    report.nextSteps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+  }
+  return lines.join("\n");
+}
+
+export { VERDICT_LABELS, DIMENSION_IDS };

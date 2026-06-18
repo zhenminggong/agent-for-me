@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import "./App.css";
 import AdminPanel from "./AdminPanel.jsx";
+import FeasibilityVerdict from "./FeasibilityVerdict.jsx";
 
 const ADMIN_HASH = "#/admin";
 
@@ -35,8 +36,14 @@ async function readChatResponse(resp) {
     (typeof data?.reply === "string" && data.reply) ||
     (typeof data?.content === "string" && data.content) ||
     "";
+  const structured =
+    data?.structured && typeof data.structured === "object"
+      ? data.structured
+      : null;
+
   return {
     content: reply.trim() || "(无回复内容，请重试)",
+    structured,
     isError: false,
   };
 }
@@ -147,13 +154,13 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agentId: agentIdForRequest, messages: apiMessages }),
       });
-      const { content: reply, isError } = await readChatResponse(resp);
+      const { content: reply, structured, isError } = await readChatResponse(resp);
       if (epochAtStart !== chatEpochRef.current) return;
       setHistories((h) => ({
         ...h,
         [agentIdForRequest]: [
           ...updated,
-          { role: "assistant", content: reply, isError },
+          { role: "assistant", content: reply, structured, isError },
         ],
       }));
     } catch (err) {
@@ -246,9 +253,19 @@ export default function App() {
               {messages.map((m, i) => (
                 <div key={i} className={`row ${m.role}`}>
                   {m.role === "assistant" && <div className="avatar">{agent.icon}</div>}
-                  <div className={`bubble${m.isError ? " error" : ""}`}>
-                    {m.content ?? "(空消息)"}
-                  </div>
+                  {m.role === "assistant" &&
+                  activeId === "advisor" &&
+                  m.structured &&
+                  !m.isError ? (
+                    <FeasibilityVerdict
+                      report={m.structured}
+                      fallbackText={m.content}
+                    />
+                  ) : (
+                    <div className={`bubble${m.isError ? " error" : ""}`}>
+                      {m.content ?? "(空消息)"}
+                    </div>
+                  )}
                 </div>
               ))}
               {loading && (
