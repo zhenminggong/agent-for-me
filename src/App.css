@@ -350,11 +350,42 @@ body {
   font-family: 'JetBrains Mono', monospace;
   color: var(--text-dim);
 }
+.fv-quality-banner {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #c4923a 12%, var(--panel-solid));
+  border: 1px solid color-mix(in srgb, #c4923a 30%, var(--line));
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #7a5a1a;
+}
+.fv-quality-banner p {
+  margin: 0;
+}
+.fv-quality-banner p + p {
+  margin-top: 4px;
+}
+
 .fv-gate-summary {
   font-size: 13px;
   color: var(--text-dim);
   line-height: 1.55;
   margin-bottom: 10px;
+}
+.fv-gate-summary-prominent {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-solid));
+  border-radius: 0 8px 8px 0;
+}
+.fv-gate-summary-missing {
+  font-style: italic;
+  color: var(--text-dim);
+  opacity: 0.75;
 }
 
 .fv-dimensions {
@@ -403,6 +434,10 @@ body {
   color: var(--text-dim);
   line-height: 1.5;
   margin-top: 4px;
+}
+.fv-dimension-reason-empty {
+  font-style: italic;
+  opacity: 0.7;
 }
 
 .fv-list-block {

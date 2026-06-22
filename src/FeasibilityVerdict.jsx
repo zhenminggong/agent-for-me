@@ -3,14 +3,17 @@ import {
   CONFIDENCE_LABELS,
   scoreTone,
   scorePercent,
+  REASON_PLACEHOLDER,
 } from "./feasibilityReport.js";
 
 /**
- * 单条维度得分行
+ * 单条维度得分行 — 始终展示 reason，空则显示占位提示
  * @param {{ label: string, score: number, reason: string }} dimension
  */
 function DimensionRow({ dimension }) {
   const tone = scoreTone(dimension.score);
+  const hasReason = Boolean(dimension.reason?.trim());
+
   return (
     <div className="fv-dimension">
       <div className="fv-dimension-head">
@@ -25,16 +28,18 @@ function DimensionRow({ dimension }) {
           style={{ width: `${scorePercent(dimension.score)}%` }}
         />
       </div>
-      {dimension.reason ? (
-        <p className="fv-dimension-reason">{dimension.reason}</p>
-      ) : null}
+      <p
+        className={`fv-dimension-reason${hasReason ? "" : " fv-dimension-reason-empty"}`}
+      >
+        {hasReason ? dimension.reason : REASON_PLACEHOLDER}
+      </p>
     </div>
   );
 }
 
 /**
- * 闸门区块（闸门一 / 闸门二）
- * @param {{ title: string, gate: object, passed: boolean }} props
+ * 闸门区块（闸门一 / 闸门二）— gate summary 置于标题下方突出展示
+ * @param {{ title: string, gate: object, passedLabel: string, failedLabel: string }} props
  */
 function GateBlock({ title, gate, passedLabel, failedLabel }) {
   if (!gate) return null;
@@ -47,7 +52,13 @@ function GateBlock({ title, gate, passedLabel, failedLabel }) {
         </span>
         <span className="fv-gate-avg">均分 {gate.averageScore}/5</span>
       </div>
-      {gate.summary ? <p className="fv-gate-summary">{gate.summary}</p> : null}
+      {gate.summary ? (
+        <p className="fv-gate-summary fv-gate-summary-prominent">{gate.summary}</p>
+      ) : (
+        <p className="fv-gate-summary fv-gate-summary-missing">
+          （该闸门缺少总结说明）
+        </p>
+      )}
       <div className="fv-dimensions">
         {(gate.dimensions || []).map((d) => (
           <DimensionRow key={d.id} dimension={d} />
@@ -76,6 +87,18 @@ function ListBlock({ title, items, variant = "default" }) {
 }
 
 /**
+ * 判断 summary 是否与 verdictLabel 实质相同（避免重复展示）
+ * @param {string} summary
+ * @param {string} verdictLabel
+ * @returns {boolean}
+ */
+function isSummarySameAsVerdict(summary, verdictLabel) {
+  if (!summary || !verdictLabel) return false;
+  const norm = (s) => s.replace(/[\s，。！？、；：""''（）]/g, "");
+  return norm(summary) === norm(verdictLabel);
+}
+
+/**
  * AI 可行性裁决 — 结构化卡片展示
  * @param {{ report: object, fallbackText?: string }} props
  */
@@ -87,13 +110,31 @@ export default function FeasibilityVerdict({ report, fallbackText }) {
   }
 
   const meta = VERDICT_META[report.verdict] || VERDICT_META.defer;
+  const labelText = report.verdictLabel || meta.label;
+  const showSummary =
+    report.summary && !isSummarySameAsVerdict(report.summary, labelText);
+  const hasWarnings =
+    (report.warnings && report.warnings.length > 0) || report.lowQuality;
 
   return (
     <div className="feasibility-verdict">
+      {hasWarnings ? (
+        <div className="fv-quality-banner" role="status">
+          {report.warnings?.map((msg, i) => (
+            <p key={i}>{msg}</p>
+          ))}
+          {report.lowQuality && !report.warnings?.length ? (
+            <p>评估细节不足，建议补充业务场景信息后重新提问。</p>
+          ) : null}
+        </div>
+      ) : null}
+
       <header className={`fv-verdict-banner tone-${meta.tone}`}>
         <div className="fv-verdict-main">
-          <span className="fv-verdict-tag">{report.verdictLabel || meta.label}</span>
-          <p className="fv-verdict-summary">{report.summary}</p>
+          <span className="fv-verdict-tag">{labelText}</span>
+          {showSummary ? (
+            <p className="fv-verdict-summary">{report.summary}</p>
+          ) : null}
         </div>
         <div className="fv-verdict-stats">
           <div className="fv-overall-score">

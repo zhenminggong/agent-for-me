@@ -14,6 +14,9 @@ export const CONFIDENCE_LABELS = {
   high: "把握较高 · 场景较清晰",
 };
 
+/** 维度 reason 为空时的占位文案（与后端 _feasibility.js 保持一致） */
+export const REASON_PLACEHOLDER = "（需补充场景信息后再评估）";
+
 /**
  * 根据 1–5 分返回展示用颜色档位
  * @param {number} score

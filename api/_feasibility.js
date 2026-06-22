@@ -18,6 +18,9 @@ const DIMENSION_IDS = [
   "alternativeCost",
 ];
 
+/** 六维 reason 为空时，前端展示的占位文案 */
+const REASON_PLACEHOLDER = "（需补充场景信息后再评估）";
+
 /**
  * 从模型原始文本中提取 JSON 对象
  * @param {string} raw
@@ -74,6 +77,51 @@ function normalizeDimensions(dimensions, template) {
 }
 
 /**
+ * 判断六维得分是否完全相同
+ * @param {Array<{score:number}>} dimensions
+ * @returns {boolean}
+ */
+function allScoresIdentical(dimensions) {
+  if (!dimensions.length) return false;
+  const first = dimensions[0].score;
+  return dimensions.every((d) => d.score === first);
+}
+
+/**
+ * 统计 reason 为空的维度数量
+ * @param {Array<{reason:string}>} dimensions
+ * @returns {number}
+ */
+function countEmptyReasons(dimensions) {
+  return dimensions.filter((d) => !d.reason).length;
+}
+
+/**
+ * 用闸门 summary 为空的 dimension reason 做兜底填充
+ * @param {Array<{reason:string}>} dimensions
+ * @param {string} gateSummary
+ */
+function fillEmptyReasonsFromGateSummary(dimensions, gateSummary) {
+  if (!gateSummary) return;
+  for (const dim of dimensions) {
+    if (!dim.reason) {
+      dim.reason = gateSummary.slice(0, 50);
+    }
+  }
+}
+
+/**
+ * 判断 summary 是否与 verdictLabel 实质重复
+ * @param {string} summary
+ * @param {string} verdictLabel
+ * @returns {boolean}
+ */
+function summaryDuplicatesVerdict(summary, verdictLabel) {
+  const norm = (s) => s.replace(/[\s，。！？、；：""''（）]/g, "").toLowerCase();
+  return norm(summary) === norm(verdictLabel);
+}
+
+/**
  * 校验并规范化完整裁决报告
  * @param {unknown} raw
  * @returns {object|null}
@@ -102,6 +150,15 @@ export function parseFeasibilityReport(raw) {
   const gate2Dims = normalizeDimensions(data.gate2?.dimensions, gate2Template);
   const allDims = [...gate1Dims, ...gate2Dims];
 
+  const gate1Summary =
+    typeof data.gate1?.summary === "string" ? data.gate1.summary.trim() : "";
+  const gate2Summary =
+    typeof data.gate2?.summary === "string" ? data.gate2.summary.trim() : "";
+
+  // 尝试用闸门 summary 补全空的 dimension reason
+  fillEmptyReasonsFromGateSummary(gate1Dims, gate1Summary);
+  fillEmptyReasonsFromGateSummary(gate2Dims, gate2Summary);
+
   const gate1Avg =
     gate1Dims.reduce((sum, d) => sum + d.score, 0) / gate1Dims.length;
   const gate2Avg =
@@ -123,30 +180,46 @@ export function parseFeasibilityReport(raw) {
       .map((s) => s.trim())
       .slice(0, 5);
 
+  const verdictLabel =
+    typeof data.verdictLabel === "string" && data.verdictLabel.trim()
+      ? data.verdictLabel.trim()
+      : VERDICT_LABELS[verdict];
+
+  let summary =
+    typeof data.summary === "string" && data.summary.trim()
+      ? data.summary.trim()
+      : VERDICT_LABELS[verdict];
+
+  // summary 与 verdictLabel 重复时，拼接 gate1 说明以提供实质内容
+  if (summaryDuplicatesVerdict(summary, verdictLabel) && gate1Summary) {
+    summary = `${gate1Summary}${gate2Summary ? `；${gate2Summary}` : ""}`;
+  }
+
+  const warnings = [];
+  const identicalScores = allScoresIdentical(allDims);
+  if (identicalScores) {
+    warnings.push("六维得分完全相同，评估可能缺乏针对性，建议补充场景细节后重新评估。");
+  }
+
+  const emptyReasonCount = countEmptyReasons(allDims);
+  const lowQuality = identicalScores || emptyReasonCount > 2;
+
   return {
     verdict,
-    verdictLabel:
-      typeof data.verdictLabel === "string" && data.verdictLabel.trim()
-        ? data.verdictLabel.trim()
-        : VERDICT_LABELS[verdict],
-    summary:
-      typeof data.summary === "string" && data.summary.trim()
-        ? data.summary.trim()
-        : VERDICT_LABELS[verdict],
+    verdictLabel,
+    summary,
     confidence: ["low", "medium", "high"].includes(data.confidence)
       ? data.confidence
       : "medium",
     gate1: {
       passed: gate1Passed,
-      summary:
-        typeof data.gate1?.summary === "string" ? data.gate1.summary.trim() : "",
+      summary: gate1Summary,
       averageScore: Math.round(gate1Avg * 10) / 10,
       dimensions: gate1Dims,
     },
     gate2: {
       passed: gate2Passed,
-      summary:
-        typeof data.gate2?.summary === "string" ? data.gate2.summary.trim() : "",
+      summary: gate2Summary,
       averageScore: Math.round(gate2Avg * 10) / 10,
       dimensions: gate2Dims,
     },
@@ -158,6 +231,8 @@ export function parseFeasibilityReport(raw) {
     alternatives: toList(data.alternatives),
     questions: toList(data.questions),
     nextSteps: toList(data.nextSteps),
+    warnings: warnings.length ? warnings : undefined,
+    lowQuality: lowQuality || undefined,
   };
 }
 
@@ -181,4 +256,4 @@ export function buildFeasibilitySummary(report) {
   return lines.join("\n");
 }
 
-export { VERDICT_LABELS, DIMENSION_IDS };
+export { VERDICT_LABELS, DIMENSION_IDS, REASON_PLACEHOLDER };

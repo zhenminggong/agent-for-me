@@ -95,6 +95,37 @@ export default async function handler(req, res) {
       report = parseFeasibilityReport(raw);
     }
 
+    // 解析成功但质量不足（六维同分或 reason 大量为空）时再重试一次
+    if (structured && report?.lowQuality) {
+      const qualityRetryPayload = {
+        ...payload,
+        messages: [
+          ...payload.messages,
+          {
+            role: "user",
+            content:
+              "上次输出质量不合格：六维得分不应全部相同，每个 dimension 的 reason 必须 20–50 字且结合用户场景，summary 不得复读 verdictLabel，gate1/gate2.summary 必填，risks/alternatives/nextSteps 至少一类≥2条。请重新输出完整 JSON。",
+          },
+        ],
+      };
+      const retryRaw = await callDashScope(apiKey, qualityRetryPayload);
+      const retryReport = parseFeasibilityReport(retryRaw);
+      if (retryReport && !retryReport.lowQuality) {
+        raw = retryRaw;
+        report = retryReport;
+      } else if (retryReport) {
+        // 重试仍低质时采用稍好的一份（空 reason 更少者优先）
+        const prevEmpty = (report.gate1.dimensions.concat(report.gate2.dimensions))
+          .filter((d) => !d.reason).length;
+        const nextEmpty = (retryReport.gate1.dimensions.concat(retryReport.gate2.dimensions))
+          .filter((d) => !d.reason).length;
+        if (nextEmpty < prevEmpty) {
+          raw = retryRaw;
+          report = retryReport;
+        }
+      }
+    }
+
     if (structured && report) {
       return res.status(200).json({
         reply: buildFeasibilitySummary(report),
