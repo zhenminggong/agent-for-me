@@ -5,6 +5,7 @@ import { getAgent } from "./_store.js";
 import {
   parseFeasibilityReport,
   buildFeasibilitySummary,
+  ensureJsonHintInMessages,
 } from "./_feasibility.js";
 
 const DASHSCOPE_URL =
@@ -72,6 +73,7 @@ export default async function handler(req, res) {
     };
 
     if (structured) {
+      payload.messages = ensureJsonHintInMessages(payload.messages);
       payload.response_format = { type: "json_object" };
     }
 

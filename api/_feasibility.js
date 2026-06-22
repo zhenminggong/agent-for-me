@@ -256,4 +256,35 @@ export function buildFeasibilitySummary(report) {
   return lines.join("\n");
 }
 
+/** DashScope json_object 模式要求 messages 中须出现 json 字样 */
+const JSON_OUTPUT_HINT = "你必须以 JSON 对象格式输出（json）。";
+
+/**
+ * 确保 messages 中含 json 关键字（DashScope response_format=json_object 硬性要求）
+ * @param {Array<{role:string, content:string}>} messages
+ * @returns {Array<{role:string, content:string}>}
+ */
+export function ensureJsonHintInMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return messages;
+
+  const hasJson = messages.some(
+    (m) => typeof m?.content === "string" && /json/i.test(m.content)
+  );
+  if (hasJson) return messages;
+
+  const cloned = messages.map((m) => ({ ...m }));
+  const systemIdx = cloned.findIndex((m) => m.role === "system");
+
+  if (systemIdx >= 0) {
+    cloned[systemIdx] = {
+      ...cloned[systemIdx],
+      content: `${cloned[systemIdx].content}\n\n${JSON_OUTPUT_HINT}`,
+    };
+  } else {
+    cloned.unshift({ role: "system", content: JSON_OUTPUT_HINT });
+  }
+
+  return cloned;
+}
+
 export { VERDICT_LABELS, DIMENSION_IDS, REASON_PLACEHOLDER };
