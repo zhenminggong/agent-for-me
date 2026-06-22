@@ -6,6 +6,37 @@ import { SEED_AGENTS } from "./_seed.js";
 
 const KEY = "agents:list"; // 存所有 Agent 配置的 key
 const VERSIONS_PREFIX = "agent:versions:"; // 每个 agent 的历史版本
+const ADVISOR_GREETING_MARK = "两道闸门";
+
+/**
+ * 判断 KV 里的 advisor 是否仍是旧版（无 structured 或开场白/ system 未升级）
+ */
+function needsAdvisorMigration(agent) {
+  if (!agent || agent.id !== "advisor") return false;
+  return (
+    agent.responseMode !== "structured" ||
+    !String(agent.greeting || "").includes(ADVISOR_GREETING_MARK) ||
+    !String(agent.system || "").toLowerCase().includes("json")
+  );
+}
+
+/**
+ * 将 KV 中过期的 advisor 配置替换为 _seed.js 最新版，写回一次即可
+ */
+async function migrateAgentsIfNeeded(kv, agents) {
+  if (!Array.isArray(agents) || !agents.some(needsAdvisorMigration)) {
+    return agents;
+  }
+
+  const seedAdvisor = SEED_AGENTS.find((a) => a.id === "advisor");
+  if (!seedAdvisor) return agents;
+
+  const next = agents.map((agent) =>
+    needsAdvisorMigration(agent) ? { ...seedAdvisor } : agent
+  );
+  await kv.set(KEY, next);
+  return next;
+}
 
 // 动态加载 KV(没装/没配时优雅降级)
 async function getKV() {
@@ -28,6 +59,8 @@ export async function listAgents() {
     // 数据库为空 → 用种子初始化
     await kv.set(KEY, SEED_AGENTS);
     agents = SEED_AGENTS;
+  } else {
+    agents = await migrateAgentsIfNeeded(kv, agents);
   }
   return { agents, editable: true };
 }

@@ -44,6 +44,7 @@ export default async function handler(req, res) {
         accent: agent.accent || "#E8915B",
         icon: agent.icon || "✦",
         temperature: typeof agent.temperature === "number" ? agent.temperature : 0.6,
+        responseMode: agent.responseMode || undefined,
         greeting: agent.greeting || "你好，有什么可以帮你的？",
         samples: Array.isArray(agent.samples) ? agent.samples : [],
         system: agent.system,
