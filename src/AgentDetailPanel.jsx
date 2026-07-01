@@ -16,6 +16,7 @@ function SkillsSection({ skills }) {
       <h3 className="detail-section-title">
         <span className="detail-icon">⚡</span>
         技能能力
+        <span className="runtime-badge" title="已注入对话 system prompt">运行时</span>
       </h3>
       <div className="skills-grid">
         {skills.map((s) => (
@@ -40,6 +41,7 @@ function LinksSection({ links, agents, onSwitchAgent }) {
       <h3 className="detail-section-title">
         <span className="detail-icon">🔗</span>
         协作编排
+        <span className="runtime-badge" title="LLM 可输出 handoff，前端一键切换">运行时</span>
       </h3>
       <div className="links-list">
         {links.map((link, i) => (
@@ -86,6 +88,7 @@ function ScheduleSection({ schedule }) {
       <h3 className="detail-section-title">
         <span className="detail-icon">📅</span>
         陪伴日程
+        <span className="runtime-badge" title="注入 prompt + 客户端时间感知">运行时</span>
       </h3>
 
       {rhythm && (

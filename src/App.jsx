@@ -41,10 +41,19 @@ async function readChatResponse(resp) {
     data?.structured && typeof data.structured === "object"
       ? data.structured
       : null;
+  const handoff =
+    data?.handoff && typeof data.handoff === "object" && data.handoff.targetId
+      ? {
+          targetId: data.handoff.targetId,
+          reason: data.handoff.reason || "",
+          label: data.handoff.label || data.handoff.targetId,
+        }
+      : null;
 
   return {
     content: reply.trim() || "(无回复内容，请重试)",
     structured,
+    handoff,
     isError: false,
   };
 }
@@ -59,6 +68,7 @@ export default function App() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [booting, setBooting] = useState(true);
   const [showDetail, setShowDetail] = useState(true);
+  const [pendingHandoff, setPendingHandoff] = useState(null);
   const endRef = useRef(null);
   /** 递增后使进行中的 send 忽略结果，避免清空后旧回复写回 */
   const chatEpochRef = useRef(0);
@@ -119,6 +129,34 @@ export default function App() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  /** 接受 handoff：切换 Agent 并注入转交上下文 */
+  const acceptHandoff = (handoff, fromAgentId) => {
+    if (!handoff?.targetId) return;
+    const target = agents.find((a) => a.id === handoff.targetId);
+    if (!target) return;
+
+    const fromName = agents.find((a) => a.id === fromAgentId)?.name || "上一 Agent";
+    const reasonLine = handoff.reason
+      ? `转交原因：${handoff.reason}`
+      : "已按协作编排切换 Agent。";
+    const contextNote = `[系统] 由「${fromName}」转交至此。${reasonLine}`;
+
+    setHistories((h) => {
+      const existing = h[handoff.targetId] || [{ role: "assistant", content: target.greeting }];
+      const hasOnlyGreeting = existing.length === 1 && existing[0].role === "assistant";
+      const base = hasOnlyGreeting ? existing : existing;
+      return {
+        ...h,
+        [handoff.targetId]: [...base, { role: "assistant", content: contextNote, isHandoffNote: true }],
+      };
+    });
+
+    setActiveId(handoff.targetId);
+    setPendingHandoff(null);
+  };
+
+  const dismissHandoff = () => setPendingHandoff(null);
+
   const clearContext = () => {
     if (!agent || !activeId) return;
     const ok = window.confirm(
@@ -154,9 +192,13 @@ export default function App() {
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId: agentIdForRequest, messages: apiMessages }),
+        body: JSON.stringify({
+          agentId: agentIdForRequest,
+          messages: apiMessages,
+          clientTime: new Date().toISOString(),
+        }),
       });
-      const { content: reply, structured, isError } = await readChatResponse(resp);
+      const { content: reply, structured, handoff, isError } = await readChatResponse(resp);
       if (epochAtStart !== chatEpochRef.current) return;
       setHistories((h) => ({
         ...h,
@@ -165,6 +207,9 @@ export default function App() {
           { role: "assistant", content: reply, structured, isError },
         ],
       }));
+      if (handoff && !isError) {
+        setPendingHandoff({ ...handoff, fromAgentId: agentIdForRequest });
+      }
     } catch (err) {
       if (epochAtStart !== chatEpochRef.current) return;
       setHistories((h) => ({
@@ -283,6 +328,38 @@ export default function App() {
               )}
 
               <div className="chat-area">
+                {pendingHandoff && (
+                  <div className="handoff-banner">
+                    <div className="handoff-banner-text">
+                      <span className="handoff-banner-icon">🔗</span>
+                      建议转交
+                      <strong>
+                        {agents.find((a) => a.id === pendingHandoff.targetId)?.icon}{" "}
+                        {pendingHandoff.label ||
+                          agents.find((a) => a.id === pendingHandoff.targetId)?.name}
+                      </strong>
+                      {pendingHandoff.reason && (
+                        <span className="handoff-banner-reason">：{pendingHandoff.reason}</span>
+                      )}
+                    </div>
+                    <div className="handoff-banner-actions">
+                      <button
+                        type="button"
+                        className="handoff-accept-btn"
+                        onClick={() => acceptHandoff(pendingHandoff, pendingHandoff.fromAgentId)}
+                      >
+                        切换 Agent
+                      </button>
+                      <button
+                        type="button"
+                        className="handoff-dismiss-btn"
+                        onClick={dismissHandoff}
+                      >
+                        暂不
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="chat">
                   {messages.map((m, i) => (
                     <div key={i} className={`row ${m.role}`}>
@@ -296,7 +373,9 @@ export default function App() {
                           fallbackText={m.content}
                         />
                       ) : (
-                        <div className={`bubble${m.isError ? " error" : ""}`}>
+                        <div
+                          className={`bubble${m.isError ? " error" : ""}${m.isHandoffNote ? " handoff-note" : ""}`}
+                        >
                           {m.content ?? "(空消息)"}
                         </div>
                       )}

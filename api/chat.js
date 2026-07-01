@@ -1,12 +1,18 @@
 // /api/chat —— 对话
 // advisor Agent 返回结构化 JSON 裁决报告；其他 Agent 仍为纯文本。
+// 运行时注入 skills / agentLinks / schedule，并解析 handoff。
 
-import { getAgent } from "./_store.js";
+import { getAgent, listAgents } from "./_store.js";
 import {
   parseFeasibilityReport,
   buildFeasibilitySummary,
   ensureJsonHintInMessages,
 } from "./_feasibility.js";
+import {
+  buildRuntimeSystem,
+  parseHandoffMarker,
+  parseHandoffFromRawJson,
+} from "./_runtime.js";
 
 const DASHSCOPE_URL =
   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
@@ -55,20 +61,27 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { agentId, messages } = req.body || {};
+    const { agentId, messages, clientTime } = req.body || {};
     const agent = await getAgent(agentId);
     if (!agent) return res.status(400).json({ error: "未找到该 Agent" });
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: "messages 必须是数组" });
     }
 
+    const { agents: allAgents } = await listAgents();
     const temperature =
       typeof agent.temperature === "number" ? agent.temperature : 0.6;
     const structured = isStructuredAdvisor(agent);
 
+    const systemContent = buildRuntimeSystem(agent, {
+      clientTime,
+      allAgents,
+      structured,
+    });
+
     const payload = {
       model: "qwen-plus",
-      messages: [{ role: "system", content: agent.system }, ...messages],
+      messages: [{ role: "system", content: systemContent }, ...messages],
       temperature,
     };
 
@@ -116,7 +129,6 @@ export default async function handler(req, res) {
         raw = retryRaw;
         report = retryReport;
       } else if (retryReport) {
-        // 重试仍低质时采用稍好的一份（空 reason 更少者优先）
         const prevEmpty = (report.gate1.dimensions.concat(report.gate2.dimensions))
           .filter((d) => !d.reason).length;
         const nextEmpty = (retryReport.gate1.dimensions.concat(retryReport.gate2.dimensions))
@@ -129,14 +141,21 @@ export default async function handler(req, res) {
     }
 
     if (structured && report) {
-      return res.status(200).json({
+      const handoff = parseHandoffFromRawJson(raw, agent.agentLinks);
+      const body = {
         reply: buildFeasibilitySummary(report),
         structured: report,
-      });
+      };
+      if (handoff) body.handoff = handoff;
+      return res.status(200).json(body);
     }
 
-    const reply = (raw && String(raw).trim()) || "(模型没有返回内容,请重试)";
-    return res.status(200).json({ reply });
+    const { reply: cleanedReply, handoff } = parseHandoffMarker(raw, agent.agentLinks);
+    const reply = (cleanedReply && String(cleanedReply).trim()) || "(模型没有返回内容,请重试)";
+
+    const body = { reply };
+    if (handoff) body.handoff = handoff;
+    return res.status(200).json(body);
   } catch (err) {
     return res.status(500).json({ error: `服务端异常: ${err.message}` });
   }
