@@ -21,20 +21,55 @@ function needsAdvisorMigration(agent) {
 }
 
 /**
- * 将 KV 中过期的 advisor 配置替换为 _seed.js 最新版，写回一次即可
+ * 判断 agent 是否缺少 v2 扩展字段（skills / agentLinks / schedule）
+ */
+function needsV2FieldsMigration(agent) {
+  if (!agent) return false;
+  const seed = SEED_AGENTS.find((s) => s.id === agent.id);
+  if (!seed) return false;
+  const missingSkills = seed.skills?.length && !agent.skills?.length;
+  const missingLinks = seed.agentLinks?.length && !agent.agentLinks?.length;
+  const missingSchedule = seed.schedule && !agent.schedule;
+  return missingSkills || missingLinks || missingSchedule;
+}
+
+/**
+ * 从 seed 合并 v2 扩展字段，保留用户已编辑的其他字段
+ */
+function mergeV2FieldsFromSeed(agent) {
+  const seed = SEED_AGENTS.find((s) => s.id === agent.id);
+  if (!seed) return agent;
+  const next = { ...agent };
+  if (seed.skills?.length && !next.skills?.length) next.skills = seed.skills;
+  if (seed.agentLinks?.length && !next.agentLinks?.length) next.agentLinks = seed.agentLinks;
+  if (seed.schedule && !next.schedule) next.schedule = seed.schedule;
+  return next;
+}
+
+/**
+ * 将 KV 中过期的 advisor 配置替换为 _seed.js 最新版，并补齐 v2 扩展字段
  */
 async function migrateAgentsIfNeeded(kv, agents) {
-  if (!Array.isArray(agents) || !agents.some(needsAdvisorMigration)) {
-    return agents;
-  }
+  if (!Array.isArray(agents)) return agents;
 
-  const seedAdvisor = SEED_AGENTS.find((a) => a.id === "advisor");
-  if (!seedAdvisor) return agents;
+  let changed = false;
+  const next = agents.map((agent) => {
+    let updated = agent;
+    if (needsAdvisorMigration(agent)) {
+      const seedAdvisor = SEED_AGENTS.find((a) => a.id === "advisor");
+      if (seedAdvisor) {
+        updated = { ...seedAdvisor };
+        changed = true;
+      }
+    }
+    if (needsV2FieldsMigration(updated)) {
+      updated = mergeV2FieldsFromSeed(updated);
+      changed = true;
+    }
+    return updated;
+  });
 
-  const next = agents.map((agent) =>
-    needsAdvisorMigration(agent) ? { ...seedAdvisor } : agent
-  );
-  await kv.set(KEY, next);
+  if (changed) await kv.set(KEY, next);
   return next;
 }
 

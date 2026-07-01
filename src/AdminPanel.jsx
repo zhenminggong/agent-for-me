@@ -11,7 +11,22 @@ const EMPTY = {
   placeholder: "说点什么……", accent: "#E8915B", icon: "✦",
   temperature: 0.6, greeting: "你好，有什么可以帮你的？",
   samples: [], system: "",
+  skills: [], agentLinks: [], schedule: null,
 };
+
+const EMPTY_SKILL = { id: "", name: "", desc: "", icon: "✦" };
+const EMPTY_LINK = { targetId: "", label: "", trigger: "" };
+const EMPTY_REMINDER = { time: "09:00", label: "" };
+
+/** 确保 schedule 对象结构完整 */
+function normalizeSchedule(schedule) {
+  if (!schedule) return { rhythm: "gentle", dailyReminders: [], careTopics: [] };
+  return {
+    rhythm: schedule.rhythm || "gentle",
+    dailyReminders: Array.isArray(schedule.dailyReminders) ? schedule.dailyReminders : [],
+    careTopics: Array.isArray(schedule.careTopics) ? schedule.careTopics : [],
+  };
+}
 
 export default function AdminPanel({ editable, onClose, onChanged }) {
   const [authed, setAuthed] = useState(!!getStoredAdminPassword());
@@ -98,7 +113,13 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
 
   const startNew = () => { setEditing({ ...EMPTY }); setVersions([]); setMsg(""); };
   const startEdit = async (a) => {
-    setEditing({ ...a, samples: a.samples || [] });
+    setEditing({
+      ...a,
+      samples: a.samples || [],
+      skills: a.skills || [],
+      agentLinks: a.agentLinks || [],
+      schedule: a.schedule ? normalizeSchedule(a.schedule) : null,
+    });
     setMsg("");
     const resp = await adminFetch(`/api/versions?id=${a.id}`);
     const data = await resp.json();
@@ -149,11 +170,110 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
   const rollback = (v) => {
     if (!confirm("用这个历史版本覆盖当前编辑内容？（保存后才真正生效）")) return;
     const { savedAt, ...rest } = v;
-    setEditing({ ...rest, samples: rest.samples || [] });
+    setEditing({
+      ...rest,
+      samples: rest.samples || [],
+      skills: rest.skills || [],
+      agentLinks: rest.agentLinks || [],
+      schedule: rest.schedule ? normalizeSchedule(rest.schedule) : null,
+    });
     setMsg("已载入历史版本，确认后点保存生效");
   };
 
   const set = (k, val) => setEditing((e) => ({ ...e, [k]: val }));
+
+  /** 更新 skills 数组中某一项 */
+  const updateSkill = (idx, field, val) => {
+    setEditing((e) => {
+      const skills = [...(e.skills || [])];
+      skills[idx] = { ...skills[idx], [field]: val };
+      return { ...e, skills };
+    });
+  };
+
+  const addSkill = () => {
+    setEditing((e) => ({ ...e, skills: [...(e.skills || []), { ...EMPTY_SKILL }] }));
+  };
+
+  const removeSkill = (idx) => {
+    setEditing((e) => ({
+      ...e,
+      skills: (e.skills || []).filter((_, i) => i !== idx),
+    }));
+  };
+
+  /** 更新 agentLinks */
+  const updateLink = (idx, field, val) => {
+    setEditing((e) => {
+      const agentLinks = [...(e.agentLinks || [])];
+      agentLinks[idx] = { ...agentLinks[idx], [field]: val };
+      return { ...e, agentLinks };
+    });
+  };
+
+  const addLink = () => {
+    setEditing((e) => ({ ...e, agentLinks: [...(e.agentLinks || []), { ...EMPTY_LINK }] }));
+  };
+
+  const removeLink = (idx) => {
+    setEditing((e) => ({
+      ...e,
+      agentLinks: (e.agentLinks || []).filter((_, i) => i !== idx),
+    }));
+  };
+
+  /** 更新 schedule */
+  const setScheduleField = (field, val) => {
+    setEditing((e) => ({
+      ...e,
+      schedule: { ...normalizeSchedule(e.schedule), [field]: val },
+    }));
+  };
+
+  const toggleSchedule = (enabled) => {
+    setEditing((e) => ({
+      ...e,
+      schedule: enabled ? normalizeSchedule(e.schedule) : null,
+    }));
+  };
+
+  const updateReminder = (idx, field, val) => {
+    setEditing((e) => {
+      const schedule = normalizeSchedule(e.schedule);
+      const dailyReminders = [...schedule.dailyReminders];
+      dailyReminders[idx] = { ...dailyReminders[idx], [field]: val };
+      return { ...e, schedule: { ...schedule, dailyReminders } };
+    });
+  };
+
+  const addReminder = () => {
+    setEditing((e) => {
+      const schedule = normalizeSchedule(e.schedule);
+      return {
+        ...e,
+        schedule: {
+          ...schedule,
+          dailyReminders: [...schedule.dailyReminders, { ...EMPTY_REMINDER }],
+        },
+      };
+    });
+  };
+
+  const removeReminder = (idx) => {
+    setEditing((e) => {
+      const schedule = normalizeSchedule(e.schedule);
+      return {
+        ...e,
+        schedule: {
+          ...schedule,
+          dailyReminders: schedule.dailyReminders.filter((_, i) => i !== idx),
+        },
+      };
+    });
+  };
+
+  /** 其他 agent id，供 handoff 目标下拉 */
+  const otherAgentIds = list.filter((a) => a.id !== editing?.id).map((a) => a.id);
 
   return (
     <div className="admin-overlay" onClick={onClose}>
@@ -261,6 +381,138 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
                       <textarea className="system-area" rows={12}
                         value={editing.system} onChange={(e) => set("system", e.target.value)} />
                     </label>
+
+                    <div className="admin-section">
+                      <div className="admin-section-head">
+                        <span className="admin-section-title">⚡ 技能能力</span>
+                        <button type="button" className="mini-add-btn" onClick={addSkill}>＋ 添加</button>
+                      </div>
+                      {(editing.skills || []).map((sk, i) => (
+                        <div key={i} className="admin-card-row">
+                          <input
+                            className="mini-input"
+                            value={sk.icon || ""}
+                            onChange={(e) => updateSkill(i, "icon", e.target.value)}
+                            placeholder="图标"
+                            title="图标"
+                          />
+                          <input
+                            className="mini-input"
+                            value={sk.id || ""}
+                            onChange={(e) => updateSkill(i, "id", e.target.value)}
+                            placeholder="id"
+                          />
+                          <input
+                            className="mini-input flex2"
+                            value={sk.name || ""}
+                            onChange={(e) => updateSkill(i, "name", e.target.value)}
+                            placeholder="名称"
+                          />
+                          <input
+                            className="mini-input flex3"
+                            value={sk.desc || ""}
+                            onChange={(e) => updateSkill(i, "desc", e.target.value)}
+                            placeholder="描述"
+                          />
+                          <button type="button" className="mini-del-btn" onClick={() => removeSkill(i)}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="admin-section">
+                      <div className="admin-section-head">
+                        <span className="admin-section-title">🔗 协作编排（Handoff）</span>
+                        <button type="button" className="mini-add-btn" onClick={addLink}>＋ 添加</button>
+                      </div>
+                      {(editing.agentLinks || []).map((link, i) => (
+                        <div key={i} className="admin-card-block">
+                          <div className="admin-card-row">
+                            <select
+                              className="mini-input flex2"
+                              value={link.targetId || ""}
+                              onChange={(e) => updateLink(i, "targetId", e.target.value)}
+                            >
+                              <option value="">选择目标 Agent</option>
+                              {otherAgentIds.map((id) => (
+                                <option key={id} value={id}>{id}</option>
+                              ))}
+                            </select>
+                            <input
+                              className="mini-input flex2"
+                              value={link.label || ""}
+                              onChange={(e) => updateLink(i, "label", e.target.value)}
+                              placeholder="显示标签"
+                            />
+                            <button type="button" className="mini-del-btn" onClick={() => removeLink(i)}>✕</button>
+                          </div>
+                          <input
+                            className="mini-input full"
+                            value={link.trigger || ""}
+                            onChange={(e) => updateLink(i, "trigger", e.target.value)}
+                            placeholder="触发条件简述"
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="admin-section">
+                      <div className="admin-section-head">
+                        <span className="admin-section-title">📅 陪伴日程</span>
+                        <label className="schedule-toggle">
+                          <input
+                            type="checkbox"
+                            checked={!!editing.schedule}
+                            onChange={(e) => toggleSchedule(e.target.checked)}
+                          />
+                          启用
+                        </label>
+                      </div>
+                      {editing.schedule && (
+                        <>
+                          <label>
+                            陪伴节奏
+                            <select
+                              value={editing.schedule.rhythm || "gentle"}
+                              onChange={(e) => setScheduleField("rhythm", e.target.value)}
+                            >
+                              <option value="gentle">温和节奏</option>
+                              <option value="active">主动关怀</option>
+                              <option value="quiet">安静陪伴</option>
+                            </select>
+                          </label>
+                          <div className="admin-sub-label">每日提醒时段</div>
+                          {(editing.schedule.dailyReminders || []).map((r, i) => (
+                            <div key={i} className="admin-card-row">
+                              <input
+                                className="mini-input"
+                                type="time"
+                                value={r.time || "09:00"}
+                                onChange={(e) => updateReminder(i, "time", e.target.value)}
+                              />
+                              <input
+                                className="mini-input flex3"
+                                value={r.label || ""}
+                                onChange={(e) => updateReminder(i, "label", e.target.value)}
+                                placeholder="提醒内容"
+                              />
+                              <button type="button" className="mini-del-btn" onClick={() => removeReminder(i)}>✕</button>
+                            </div>
+                          ))}
+                          <button type="button" className="mini-add-btn block" onClick={addReminder}>＋ 添加时段</button>
+                          <label>
+                            关心话题（每行一个）
+                            <textarea
+                              rows={2}
+                              value={(editing.schedule.careTopics || []).join("\n")}
+                              onChange={(e) => setScheduleField(
+                                "careTopics",
+                                e.target.value.split("\n").filter(Boolean)
+                              )}
+                            />
+                          </label>
+                        </>
+                      )}
+                    </div>
 
                     {msg && <div className="form-msg">{msg}</div>}
 

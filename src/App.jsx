@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import "./App.css";
 import AdminPanel from "./AdminPanel.jsx";
 import FeasibilityVerdict from "./FeasibilityVerdict.jsx";
+import AgentDetailPanel from "./AgentDetailPanel.jsx";
 
 const ADMIN_HASH = "#/admin";
 
@@ -57,6 +58,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [booting, setBooting] = useState(true);
+  const [showDetail, setShowDetail] = useState(true);
   const endRef = useRef(null);
   /** 递增后使进行中的 send 忽略结果，避免清空后旧回复写回 */
   const chatEpochRef = useRef(0);
@@ -212,6 +214,9 @@ export default function App() {
               <span className="agent-tab-text">
                 <span className="agent-tab-name">{a.icon} {a.name}</span>
                 <span className="agent-tab-tag">{a.tagline}</span>
+                {a.skills?.length > 0 && (
+                  <span className="agent-tab-skills">{a.skills.length} 项技能</span>
+                )}
               </span>
             </button>
           ))}
@@ -235,68 +240,99 @@ export default function App() {
             <header className="main-head">
               <div className="main-head-row">
                 <div>
-                  <h1>{agent.name}</h1>
+                  <h1>{agent.icon} {agent.name}</h1>
                   <p>{agent.desc}</p>
-                </div>
-                <button
-                  type="button"
-                  className="clear-context-btn"
-                  onClick={clearContext}
-                  title="清空当前 Agent 对话，开始新场景"
-                >
-                  清空上下文
-                </button>
-              </div>
-            </header>
-
-            <div className="chat">
-              {messages.map((m, i) => (
-                <div key={i} className={`row ${m.role}`}>
-                  {m.role === "assistant" && <div className="avatar">{agent.icon}</div>}
-                  {m.role === "assistant" &&
-                  activeId === "advisor" &&
-                  m.structured &&
-                  !m.isError ? (
-                    <FeasibilityVerdict
-                      report={m.structured}
-                      fallbackText={m.content}
-                    />
-                  ) : (
-                    <div className={`bubble${m.isError ? " error" : ""}`}>
-                      {m.content ?? "(空消息)"}
+                  {agent.skills?.length > 0 && (
+                    <div className="head-skill-tags">
+                      {agent.skills.slice(0, 4).map((s) => (
+                        <span key={s.id} className="head-skill-tag">
+                          {s.icon} {s.name}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
-              ))}
-              {loading && (
-                <div className="row assistant">
-                  <div className="avatar">{agent.icon}</div>
-                  <div className="bubble typing"><span></span><span></span><span></span></div>
+                <div className="main-head-actions">
+                  <button
+                    type="button"
+                    className={`detail-toggle-btn${showDetail ? " active" : ""}`}
+                    onClick={() => setShowDetail((v) => !v)}
+                    title={showDetail ? "隐藏能力面板" : "显示能力面板"}
+                  >
+                    {showDetail ? "隐藏面板" : "能力面板"}
+                  </button>
+                  <button
+                    type="button"
+                    className="clear-context-btn"
+                    onClick={clearContext}
+                    title="清空当前 Agent 对话，开始新场景"
+                  >
+                    清空上下文
+                  </button>
                 </div>
-              )}
-              <div ref={endRef} />
-            </div>
-
-            {messages.length <= 1 && agent.samples?.length > 0 && (
-              <div className="samples">
-                {agent.samples.map((s, i) => (
-                  <button key={i} className="sample" onClick={() => send(s)}>{s}</button>
-                ))}
               </div>
-            )}
+            </header>
 
-            <div className="composer">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKey}
-                placeholder={agent.placeholder}
-                rows={1}
-                disabled={loading}
-              />
-              <button className="send" onClick={() => send()} disabled={loading || !input.trim()}>
-                发送
-              </button>
+            <div className={`main-body${showDetail ? " with-detail" : ""}`}>
+              {showDetail && (
+                <AgentDetailPanel
+                  agent={agent}
+                  agents={agents}
+                  onSwitchAgent={setActiveId}
+                />
+              )}
+
+              <div className="chat-area">
+                <div className="chat">
+                  {messages.map((m, i) => (
+                    <div key={i} className={`row ${m.role}`}>
+                      {m.role === "assistant" && <div className="avatar">{agent.icon}</div>}
+                      {m.role === "assistant" &&
+                      activeId === "advisor" &&
+                      m.structured &&
+                      !m.isError ? (
+                        <FeasibilityVerdict
+                          report={m.structured}
+                          fallbackText={m.content}
+                        />
+                      ) : (
+                        <div className={`bubble${m.isError ? " error" : ""}`}>
+                          {m.content ?? "(空消息)"}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {loading && (
+                    <div className="row assistant">
+                      <div className="avatar">{agent.icon}</div>
+                      <div className="bubble typing"><span></span><span></span><span></span></div>
+                    </div>
+                  )}
+                  <div ref={endRef} />
+                </div>
+
+                {messages.length <= 1 && agent.samples?.length > 0 && (
+                  <div className="samples">
+                    {agent.samples.map((s, i) => (
+                      <button key={i} className="sample" onClick={() => send(s)}>{s}</button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="composer">
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={onKey}
+                    placeholder={agent.placeholder}
+                    rows={1}
+                    disabled={loading}
+                  />
+                  <button className="send" onClick={() => send()} disabled={loading || !input.trim()}>
+                    发送
+                  </button>
+                </div>
+              </div>
             </div>
           </>
         )}

@@ -47,6 +47,9 @@ export default async function handler(req, res) {
         responseMode: agent.responseMode || undefined,
         greeting: agent.greeting || "你好，有什么可以帮你的？",
         samples: Array.isArray(agent.samples) ? agent.samples : [],
+        skills: Array.isArray(agent.skills) ? agent.skills : [],
+        agentLinks: Array.isArray(agent.agentLinks) ? agent.agentLinks : [],
+        schedule: agent.schedule && typeof agent.schedule === "object" ? agent.schedule : undefined,
         system: agent.system,
       });
       return res.status(200).json({ agent: saved });
