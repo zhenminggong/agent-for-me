@@ -3,21 +3,101 @@
  * 前台只读展示，数据来自 /api/agents 公开字段。
  */
 
+import { useState } from "react";
+
 /** 根据 targetId 在 agents 列表中查找名称 */
 function resolveAgentName(agents, targetId) {
   return agents.find((a) => a.id === targetId)?.name || targetId;
 }
 
-/** 技能卡片网格 */
-function SkillsSection({ skills }) {
-  if (!skills?.length) return null;
+/**
+ * 可折叠详情区块（默认收起，点击标题展开）
+ * @param {string} id - 区块 id，用于 aria 关联
+ * @param {string} title - 标题文案
+ * @param {string} icon - 标题图标
+ * @param {boolean} defaultOpen - 是否默认展开
+ * @param {React.ReactNode} titleExtra - 标题行额外操作（如配置入口）
+ * @param {React.ReactNode} summary - 收起时在标题旁显示的摘要
+ * @param {React.ReactNode} badge - 右侧徽章（如「运行时」）
+ */
+function DetailAccordion({
+  id,
+  title,
+  icon,
+  defaultOpen = false,
+  titleExtra,
+  summary,
+  badge,
+  children,
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
   return (
-    <section className="detail-section">
-      <h3 className="detail-section-title">
-        <span className="detail-icon">⚡</span>
-        技能能力
-        <span className="runtime-badge" title="已注入对话 system prompt">运行时</span>
-      </h3>
+    <section className={`detail-section detail-accordion${open ? " open" : ""}`}>
+      <div className="detail-accordion-head">
+        <button
+          type="button"
+          className="detail-accordion-trigger"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={`${id}-panel`}
+        >
+          <span className="detail-section-title">
+            <span className="detail-icon">{icon}</span>
+            {title}
+            {!open && summary && (
+              <span className="detail-accordion-summary">{summary}</span>
+            )}
+            {badge}
+            <span className="detail-accordion-chevron" aria-hidden>▾</span>
+          </span>
+        </button>
+        {titleExtra}
+      </div>
+      <div
+        id={`${id}-panel`}
+        className="detail-accordion-panel"
+        hidden={!open}
+      >
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** 技能卡片网格（可折叠，默认收起） */
+function SkillsSection({ skills, agentId, onConfigureSkills }) {
+  if (!skills?.length) return null;
+
+  const configLink = (
+    <a
+      href={`#/admin?agent=${encodeURIComponent(agentId)}&section=skills`}
+      className="detail-config-link"
+      title="打开管理后台配置技能（需登录）"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onConfigureSkills?.(agentId);
+      }}
+    >
+      ⚙ 配置
+    </a>
+  );
+
+  return (
+    <DetailAccordion
+      id="skills"
+      icon="⚡"
+      title="技能能力"
+      defaultOpen={false}
+      summary={`${skills.length} 项`}
+      titleExtra={configLink}
+      badge={
+        <span className="runtime-badge" title="已注入对话 system prompt">
+          运行时
+        </span>
+      }
+    >
       <div className="skills-grid">
         {skills.map((s) => (
           <div key={s.id} className="skill-card">
@@ -29,20 +109,27 @@ function SkillsSection({ skills }) {
           </div>
         ))}
       </div>
-    </section>
+    </DetailAccordion>
   );
 }
 
-/** 多 Agent 协作 / handoff 链路 */
+/** 多 Agent 协作 / handoff 链路（可折叠，默认收起） */
 function LinksSection({ links, agents, onSwitchAgent }) {
   if (!links?.length) return null;
+
   return (
-    <section className="detail-section">
-      <h3 className="detail-section-title">
-        <span className="detail-icon">🔗</span>
-        协作编排
-        <span className="runtime-badge" title="LLM 可输出 handoff，前端一键切换">运行时</span>
-      </h3>
+    <DetailAccordion
+      id="links"
+      icon="🔗"
+      title="协作编排"
+      defaultOpen={false}
+      summary={`${links.length} 条`}
+      badge={
+        <span className="runtime-badge" title="LLM 可输出 handoff，前端一键切换">
+          运行时
+        </span>
+      }
+    >
       <div className="links-list">
         {links.map((link, i) => (
           <div key={i} className="link-card">
@@ -66,11 +153,11 @@ function LinksSection({ links, agents, onSwitchAgent }) {
           </div>
         ))}
       </div>
-    </section>
+    </DetailAccordion>
   );
 }
 
-/** 陪伴 Agent 日程时间轴 */
+/** 陪伴 Agent 日程时间轴（保持展开） */
 function ScheduleSection({ schedule }) {
   if (!schedule) return null;
   const { rhythm, dailyReminders = [], careTopics = [] } = schedule;
@@ -88,7 +175,9 @@ function ScheduleSection({ schedule }) {
       <h3 className="detail-section-title">
         <span className="detail-icon">📅</span>
         陪伴日程
-        <span className="runtime-badge" title="注入 prompt + 客户端时间感知">运行时</span>
+        <span className="runtime-badge" title="注入 prompt + 客户端时间感知">
+          运行时
+        </span>
       </h3>
 
       {rhythm && (
@@ -130,8 +219,14 @@ function ScheduleSection({ schedule }) {
  * @param {object} agent - 当前 Agent 配置
  * @param {object[]} agents - 全部 Agent（用于解析 handoff 目标名）
  * @param {function} onSwitchAgent - 点击协作目标时切换 Agent
+ * @param {function} onConfigureSkills - 打开管理后台并定位到技能编辑区
  */
-export default function AgentDetailPanel({ agent, agents = [], onSwitchAgent }) {
+export default function AgentDetailPanel({
+  agent,
+  agents = [],
+  onSwitchAgent,
+  onConfigureSkills,
+}) {
   if (!agent) return null;
 
   const hasSkills = agent.skills?.length > 0;
@@ -152,7 +247,11 @@ export default function AgentDetailPanel({ agent, agents = [], onSwitchAgent }) 
 
   return (
     <aside className="agent-detail">
-      <SkillsSection skills={agent.skills} />
+      <SkillsSection
+        skills={agent.skills}
+        agentId={agent.id}
+        onConfigureSkills={onConfigureSkills}
+      />
       <LinksSection
         links={agent.agentLinks}
         agents={agents}

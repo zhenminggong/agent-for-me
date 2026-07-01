@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   getStoredAdminPassword,
   setStoredAdminPassword,
@@ -28,7 +28,13 @@ function normalizeSchedule(schedule) {
   };
 }
 
-export default function AdminPanel({ editable, onClose, onChanged }) {
+export default function AdminPanel({
+  editable,
+  onClose,
+  onChanged,
+  focusAgentId = null,
+  focusSection = null,
+}) {
   const [authed, setAuthed] = useState(!!getStoredAdminPassword());
   const [loginPwd, setLoginPwd] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -39,6 +45,8 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
   const [versions, setVersions] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  /** 避免同一 focus 参数重复触发编辑与滚动 */
+  const focusAppliedRef = useRef("");
 
   const loadFull = async () => {
     const resp = await adminFetch("/api/agents?full=1");
@@ -125,6 +133,31 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
     const data = await resp.json();
     setVersions(data.versions || []);
   };
+
+  /** 登录后根据 URL 参数自动打开指定 Agent 并滚动到区块 */
+  useEffect(() => {
+    if (!authed || !list.length || !focusAgentId) return;
+
+    const focusKey = `${focusAgentId}:${focusSection || ""}`;
+    if (focusAppliedRef.current === focusKey) return;
+
+    const target = list.find((a) => a.id === focusAgentId);
+    if (!target) return;
+
+    focusAppliedRef.current = focusKey;
+
+    (async () => {
+      await startEdit(target);
+      if (focusSection === "skills") {
+        window.setTimeout(() => {
+          document.getElementById("admin-skills-section")?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        }, 80);
+      }
+    })();
+  }, [authed, list, focusAgentId, focusSection]);
 
   const save = async () => {
     if (!editing.id || !editing.name || !editing.system) {
@@ -294,6 +327,12 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
           <form className="admin-login" onSubmit={tryLogin}>
             <p className="admin-login-hint">
               请输入部署时配置的 <code>ADMIN_PASSWORD</code> 管理口令。
+              {focusAgentId && (
+                <span className="admin-login-focus-hint">
+                  {" "}登录后将自动打开 Agent「{focusAgentId}」
+                  {focusSection === "skills" ? " 的技能配置" : " 的编辑页"}。
+                </span>
+              )}
             </p>
             <label>
               管理口令
@@ -382,7 +421,7 @@ export default function AdminPanel({ editable, onClose, onChanged }) {
                         value={editing.system} onChange={(e) => set("system", e.target.value)} />
                     </label>
 
-                    <div className="admin-section">
+                    <div className="admin-section" id="admin-skills-section">
                       <div className="admin-section-head">
                         <span className="admin-section-title">⚡ 技能能力</span>
                         <button type="button" className="mini-add-btn" onClick={addSkill}>＋ 添加</button>

@@ -11,6 +11,18 @@ function isAdminHash() {
   return h === ADMIN_HASH || h.startsWith("#/admin");
 }
 
+/** 解析 #/admin?agent=xxx&section=skills 等查询参数 */
+function parseAdminHashQuery() {
+  const hash = window.location.hash;
+  const qIndex = hash.indexOf("?");
+  if (qIndex < 0) return { agentId: null, section: null };
+  const params = new URLSearchParams(hash.slice(qIndex + 1));
+  return {
+    agentId: params.get("agent") || null,
+    section: params.get("section") || null,
+  };
+}
+
 /** 解析 /api/chat 响应，兼容 JSON 错误体与 HTML 404（仅 npm run dev 时常见） */
 async function readChatResponse(resp) {
   const raw = await resp.text();
@@ -66,6 +78,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [adminFocus, setAdminFocus] = useState({ agentId: null, section: null });
   const [booting, setBooting] = useState(true);
   const [showDetail, setShowDetail] = useState(true);
   const [pendingHandoff, setPendingHandoff] = useState(null);
@@ -101,18 +114,27 @@ export default function App() {
 
   useEffect(() => { loadAgents(); }, [loadAgents]);
 
-  // Hash 路由：#/admin 打开管理面板
+  // Hash 路由：#/admin 打开管理面板，并解析 ?agent= & section=
   useEffect(() => {
-    const syncAdminFromHash = () => setShowAdmin(isAdminHash());
+    const syncAdminFromHash = () => {
+      setShowAdmin(isAdminHash());
+      setAdminFocus(parseAdminHashQuery());
+    };
     syncAdminFromHash();
     window.addEventListener("hashchange", syncAdminFromHash);
     return () => window.removeEventListener("hashchange", syncAdminFromHash);
   }, []);
 
-  const openAdmin = () => {
-    if (!isAdminHash()) window.location.hash = "/admin";
+  const openAdmin = (agentId = null, section = null) => {
+    const params = new URLSearchParams();
+    if (agentId) params.set("agent", agentId);
+    if (section) params.set("section", section);
+    const query = params.toString();
+    window.location.hash = query ? `/admin?${query}` : "/admin";
     setShowAdmin(true);
   };
+
+  const openAdminForSkills = (agentId) => openAdmin(agentId, "skills");
 
   const closeAdmin = () => {
     if (isAdminHash()) {
@@ -324,6 +346,7 @@ export default function App() {
                   agent={agent}
                   agents={agents}
                   onSwitchAgent={setActiveId}
+                  onConfigureSkills={openAdminForSkills}
                 />
               )}
 
@@ -422,6 +445,8 @@ export default function App() {
           editable={editable}
           onClose={closeAdmin}
           onChanged={loadAgents}
+          focusAgentId={adminFocus.agentId}
+          focusSection={adminFocus.section}
         />
       )}
     </div>
