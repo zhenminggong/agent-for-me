@@ -1,5 +1,43 @@
 import { useState, useEffect, useCallback } from "react";
-import { adminFetch } from "./adminAuth.js";
+
+/**
+ * 一组标注为「示例」的演示数据。
+ * 用于：没配 KV、真实数据还是 0、或读取失败时——保证访客/面试官一进来就能看到
+ * 完整的看板长什么样，而不是一片空白。始终配合顶部「示例数据」横幅，绝不冒充真实。
+ * 裁决分布刻意让「不建议用 AI」占最高，呼应裁决官"敢劝退"的定位。
+ */
+function buildDemoData(span) {
+  const now = Date.now();
+  const daily = [];
+  for (let i = span - 1; i >= 0; i--) {
+    const date = new Date(now - i * 86400000).toISOString().slice(0, 10);
+    const t = span - i; // 1..span
+    const wave = 1 + 0.3 * Math.sin(t * 0.8);
+    const growth = 0.6 + 0.5 * (t / span);
+    const pv = Math.max(6, Math.round(34 * wave * growth));
+    daily.push({
+      date,
+      pv,
+      uv: Math.round(pv * 0.44),
+      chats: Math.round(pv * 0.32 * (0.9 + 0.2 * Math.sin(t))),
+      tokens: Math.round(pv * 0.32 * 330),
+      toolCalls: Math.round(pv * 0.08),
+      handoffs: Math.round(pv * 0.03),
+      verdict_worth_doing: 0,
+      verdict_defer: 0,
+      verdict_reject: 0,
+    });
+  }
+  return {
+    total: {
+      pv: 1240, uv: 418, chats: 356, tokens: 132400,
+      toolCalls: 92, handoffs: 27,
+      verdict_worth_doing: 14, verdict_defer: 22, verdict_reject: 47,
+    },
+    daily,
+    firstDay: daily[0].date,
+  };
+}
 
 /** 千分位；大数用 k/M 简写 */
 function fmt(n) {
@@ -117,52 +155,58 @@ function VerdictBar({ total }) {
   );
 }
 
-/** 运营看板主体 */
+/** total 里所有累计计数之和为 0 → 视为"还没有真实数据" */
+function isEmptyTotal(total) {
+  if (!total) return true;
+  const keys = ["pv", "chats", "tokens", "toolCalls", "handoffs",
+    "verdict_worth_doing", "verdict_defer", "verdict_reject"];
+  return keys.every((k) => !Number(total[k]));
+}
+
+/** 运营看板主体（公开只读） */
 export default function MetricsDashboard() {
   const [data, setData] = useState(null);
-  const [status, setStatus] = useState("loading"); // loading | ok | unavailable | error
+  const [status, setStatus] = useState("loading"); // loading | ok
+  const [isDemo, setIsDemo] = useState(false);
   const [days, setDays] = useState(14);
 
   const load = useCallback(async (span) => {
     setStatus("loading");
+    const showDemo = () => {
+      setData(buildDemoData(span));
+      setIsDemo(true);
+      setStatus("ok");
+    };
     try {
-      const resp = await adminFetch(`/api/metrics?days=${span}`);
-      const json = await resp.json();
-      if (!resp.ok) {
-        setStatus("error");
-        return;
-      }
-      if (json.available === false) {
-        setStatus("unavailable");
+      const resp = await fetch(`/api/metrics?days=${span}`);
+      const json = await resp.json().catch(() => null);
+      // 没配 KV / 读取失败 / 有 KV 但还没积累出数据 → 一律回退到示例，避免空看板
+      if (!resp.ok || !json || json.available === false || isEmptyTotal(json.total)) {
+        showDemo();
         return;
       }
       setData(json);
+      setIsDemo(false);
       setStatus("ok");
     } catch {
-      setStatus("error");
+      showDemo(); // 网络异常也给示例，而不是报错页
     }
   }, []);
 
   useEffect(() => { load(days); }, [load, days]);
 
   if (status === "loading") return <div className="metrics-msg">加载运营数据中…</div>;
-  if (status === "unavailable")
-    return (
-      <div className="metrics-msg">
-        未配置 Vercel KV，暂无运营数据。配置 KV 后，浏览量、对话量、token 等会自动开始累计。
-      </div>
-    );
-  if (status === "error" || !data)
-    return (
-      <div className="metrics-msg">
-        读取失败。<button className="link-btn" onClick={() => load(days)}>重试</button>
-      </div>
-    );
 
   const { total, daily } = data;
 
   return (
     <div className="metrics">
+      {isDemo && (
+        <div className="demo-banner">
+          <span className="demo-badge">示例数据</span>
+          当前展示的是演示数据。接入真实流量（并配置 Vercel KV）后，这里会自动替换为实时统计。
+        </div>
+      )}
       <div className="metrics-cards">
         <StatCard label="浏览量 PV" value={fmt(total.pv)} sub={`独立访客 ${fmt(total.uv)}`} accent="#4a8fb8" />
         <StatCard label="对话数" value={fmt(total.chats)} accent="#6BA88E" />
@@ -204,8 +248,9 @@ export default function MetricsDashboard() {
       </div>
 
       <p className="metrics-foot">
-        统计口径：PV 每次载入 +1，UV 按浏览器匿名 id 去重；数据存于 Vercel KV，
-        起始于 {data.firstDay}。
+        {isDemo
+          ? "以上为示例数据，仅用于展示看板形态。真实统计口径：PV 每次载入 +1，UV 按浏览器匿名 id 去重（HyperLogLog），存于 Vercel KV。"
+          : `统计口径：PV 每次载入 +1，UV 按浏览器匿名 id 去重；数据存于 Vercel KV，起始于 ${data.firstDay}。`}
       </p>
     </div>
   );

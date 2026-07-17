@@ -1559,3 +1559,61 @@ body {
   color: var(--text-dim);
   line-height: 1.6;
 }
+
+/* ==================== 运营看板入口 + 弹窗 ==================== */
+/* 侧栏入口：比"管理 Agent"更醒目，用主色实底，让访客一眼看到有这个功能 */
+.dashboard-btn {
+  width: 100%;
+  padding: 11px;
+  margin-bottom: 10px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: filter .15s ease, transform .05s ease;
+}
+.dashboard-btn:hover { filter: brightness(1.05); }
+.dashboard-btn:active { transform: translateY(1px); }
+
+/* 折叠态侧栏（≤760px）里按钮只留 emoji */
+@media (max-width: 760px) {
+  .dashboard-btn { font-size: 0; padding: 11px 0; }
+  .dashboard-btn::before { content: "📊"; font-size: 16px; }
+}
+
+/* 看板弹窗：复用 .admin 外框，内容区可滚动 */
+.dashboard-modal { display: flex; flex-direction: column; }
+.dashboard-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+}
+
+/* 示例数据横幅 */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-solid));
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+.demo-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}

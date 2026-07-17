@@ -4,6 +4,7 @@ import AdminPanel from "./AdminPanel.jsx";
 import FeasibilityVerdict from "./FeasibilityVerdict.jsx";
 import AgentDetailPanel from "./AgentDetailPanel.jsx";
 import MessageContent from "./MessageContent.jsx";
+import MetricsDashboard from "./MetricsDashboard.jsx";
 
 const ADMIN_HASH = "#/admin";
 
@@ -164,6 +165,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
   const [adminFocus, setAdminFocus] = useState({ agentId: null, section: null });
   const [booting, setBooting] = useState(true);
   const [showDetail, setShowDetail] = useState(true);
@@ -439,6 +441,9 @@ export default function App() {
         </nav>
 
         <div className="sidebar-foot">
+          <button className="dashboard-btn" onClick={() => setShowDashboard(true)}>
+            📊 运营看板
+          </button>
           <button className="admin-btn" onClick={openAdmin}>
             ⚙ 管理 Agent
           </button>
@@ -619,6 +624,20 @@ export default function App() {
           focusAgentId={adminFocus.agentId}
           focusSection={adminFocus.section}
         />
+      )}
+
+      {showDashboard && (
+        <div className="admin-overlay" onClick={() => setShowDashboard(false)}>
+          <div className="admin dashboard-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="admin-head">
+              <h2>📊 运营看板</h2>
+              <button className="x" onClick={() => setShowDashboard(false)}>✕</button>
+            </div>
+            <div className="dashboard-modal-body">
+              <MetricsDashboard />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

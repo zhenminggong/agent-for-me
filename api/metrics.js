@@ -1,11 +1,12 @@
 // /api/metrics —— 运营指标
 //   POST            公开：上报一次页面浏览 { visitorId, tzOffset }
-//   GET  ?days=14   需管理鉴权：返回看板数据（总计 + 每日序列 + UV）
+//   GET  ?days=14   公开只读：返回看板数据（总计 + 每日序列 + UV）
 //
-// 浏览上报走公开 POST：它只会 +1，不泄露任何数据；读取才需要口令。
+// 看板是作品的展示门面，读取刻意做成公开——访客/面试官不登录就能看到运营数据。
+// 这些是聚合统计（PV、token、裁决分布），不含任何用户内容或隐私。
+// 写操作（改 Agent）仍走 /api/agents 的管理鉴权，不受影响。
 
 import { recordPageView, readDashboard } from "./_metrics.js";
-import { requireAdmin } from "./_auth.js";
 import { enforceRateLimit } from "./_ratelimit.js";
 
 export default async function handler(req, res) {
@@ -25,8 +26,6 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "GET") {
-      if (!requireAdmin(req, res)) return;
-
       const days = Number(req.query.days) || 14;
       const tzOffset = Number(req.query.tzOffset);
       const data = await readDashboard(days, Number.isFinite(tzOffset) ? tzOffset : 480);
