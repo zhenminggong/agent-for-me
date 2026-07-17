@@ -6,6 +6,7 @@
 import { listAgents, saveAgent, deleteAgent } from "./_store.js";
 import { toPublic } from "./_seed.js";
 import { requireAdmin } from "./_auth.js";
+import { listAvailableTools } from "./_tools.js";
 
 export default async function handler(req, res) {
   try {
@@ -17,6 +18,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         agents: full ? agents : agents.map(toPublic),
         editable,
+        tools: listAvailableTools(), // 后台技能配置的工具下拉用
       });
     }
 
@@ -34,6 +36,16 @@ export default async function handler(req, res) {
         return res
           .status(400)
           .json({ error: "id 只能用字母、数字、下划线、连字符" });
+      }
+      // 绑定了不存在的工具 → 显式报错，否则保存后会静默失效
+      const knownTools = new Set(listAvailableTools().map((t) => t.name));
+      const badTool = (Array.isArray(agent.skills) ? agent.skills : []).find(
+        (s) => s?.tool && !knownTools.has(s.tool)
+      );
+      if (badTool) {
+        return res.status(400).json({
+          error: `技能「${badTool.name || badTool.id}」绑定了未知工具：${badTool.tool}`,
+        });
       }
       const saved = await saveAgent({
         id: agent.id,

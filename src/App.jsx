@@ -3,6 +3,7 @@ import "./App.css";
 import AdminPanel from "./AdminPanel.jsx";
 import FeasibilityVerdict from "./FeasibilityVerdict.jsx";
 import AgentDetailPanel from "./AgentDetailPanel.jsx";
+import MessageContent from "./MessageContent.jsx";
 
 const ADMIN_HASH = "#/admin";
 
@@ -21,6 +22,62 @@ function parseAdminHashQuery() {
     agentId: params.get("agent") || null,
     section: params.get("section") || null,
   };
+}
+
+/**
+ * 当前本地「墙上时钟」，形如 2026-07-16T21:30。
+ * 不用 toISOString()——那是 UTC，服务端（Vercel 跑在 UTC）会把它当本地时间读，
+ * 东八区用户的时间感知会整体偏 8 小时。
+ */
+function localClientTime() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 本地时区相对 UTC 的分钟数，东八区为 +480 */
+function localTzOffset() {
+  return -new Date().getTimezoneOffset();
+}
+
+/** 响应是否为 SSE 流（非结构化 Agent 走流式，advisor 仍走 JSON） */
+function isEventStream(resp) {
+  return (resp.headers.get("content-type") || "").includes("text/event-stream");
+}
+
+/**
+ * 逐段读取 SSE 流。事件形如 `data: {"type":"delta","text":"..."}`。
+ * @param {Response} resp
+ * @param {{ onDelta: (t:string)=>void, onHandoff: (h:object)=>void, onError: (e:string)=>void, onStatus: (s:object)=>void }} handlers
+ */
+async function readEventStream(resp, { onDelta, onHandoff, onError, onStatus }) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // 末段可能是半截事件，留到下一轮
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      try {
+        const evt = JSON.parse(trimmed.slice(5).trim());
+        if (evt.type === "delta") onDelta(evt.text);
+        else if (evt.type === "status") onStatus(evt);
+        else if (evt.type === "handoff") onHandoff(evt.handoff);
+        else if (evt.type === "error") onError(evt.error);
+      } catch {
+        /* 半截 JSON，跳过 */
+      }
+    }
+  }
 }
 
 /** 解析 /api/chat 响应，兼容 JSON 错误体与 HTML 404（仅 npm run dev 时常见） */
@@ -195,6 +252,60 @@ export default function App() {
     }));
   };
 
+  /**
+   * 消费 SSE 流：首个增量到达即撤掉打字动画，之后原地累加渲染。
+   * 期间若用户清空了上下文（epoch 变化），丢弃后续增量。
+   */
+  const consumeStream = async (resp, { agentIdForRequest, epochAtStart, updated }) => {
+    let acc = "";
+    let handoff = null;
+    let streamError = null;
+    let firstDelta = true;
+    const toolTrace = []; // 本轮实际调用过的工具，随消息一起留档
+
+    const paint = (streaming) => {
+      if (epochAtStart !== chatEpochRef.current) return;
+      setHistories((h) => ({
+        ...h,
+        [agentIdForRequest]: [
+          ...updated,
+          {
+            role: "assistant",
+            content: acc,
+            streaming,
+            isError: !!streamError,
+            tools: toolTrace.length ? [...toolTrace] : undefined,
+          },
+        ],
+      }));
+    };
+
+    await readEventStream(resp, {
+      onDelta: (t) => {
+        acc += t;
+        if (firstDelta) {
+          firstDelta = false;
+          if (epochAtStart === chatEpochRef.current) setLoading(false);
+        }
+        paint(true);
+      },
+      onStatus: (s) => {
+        // 工具调用期间模型不产出正文，用这个撑住等待感
+        toolTrace.push({ tool: s.tool, label: s.label, icon: s.icon });
+        if (epochAtStart === chatEpochRef.current) setLoading(false);
+        paint(true);
+      },
+      onHandoff: (h) => { handoff = h; },
+      onError: (e) => { streamError = e; acc = acc || `出错了：${e}`; },
+    });
+
+    if (epochAtStart !== chatEpochRef.current) return;
+    paint(false);
+    if (handoff && !streamError) {
+      setPendingHandoff({ ...handoff, fromAgentId: agentIdForRequest });
+    }
+  };
+
   const send = async (text) => {
     const content = (text ?? input).trim();
     if (!content || loading || !agent) return;
@@ -217,9 +328,15 @@ export default function App() {
         body: JSON.stringify({
           agentId: agentIdForRequest,
           messages: apiMessages,
-          clientTime: new Date().toISOString(),
+          clientTime: localClientTime(),
+          tzOffset: localTzOffset(),
         }),
       });
+      if (isEventStream(resp)) {
+        await consumeStream(resp, { agentIdForRequest, epochAtStart, updated });
+        return;
+      }
+
       const { content: reply, structured, handoff, isError } = await readChatResponse(resp);
       if (epochAtStart !== chatEpochRef.current) return;
       setHistories((h) => ({
@@ -399,7 +516,29 @@ export default function App() {
                         <div
                           className={`bubble${m.isError ? " error" : ""}${m.isHandoffNote ? " handoff-note" : ""}`}
                         >
-                          {m.content ?? "(空消息)"}
+                          {m.tools?.length > 0 && (
+                            <div className="tool-trace">
+                              {m.tools.map((t, ti) => (
+                                <span key={ti} className="tool-chip">
+                                  <span className="tool-chip-icon">{t.icon}</span>
+                                  {t.label}
+                                  {m.streaming && ti === m.tools.length - 1 && !m.content && (
+                                    <span className="tool-chip-dots">
+                                      <span></span><span></span><span></span>
+                                    </span>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {m.role === "assistant" && !m.isError && !m.isHandoffNote ? (
+                            <MessageContent
+                              text={m.content ?? ""}
+                              streaming={m.streaming}
+                            />
+                          ) : (
+                            m.content ?? "(空消息)"
+                          )}
                         </div>
                       )}
                     </div>

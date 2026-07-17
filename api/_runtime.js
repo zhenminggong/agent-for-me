@@ -14,19 +14,38 @@ const HANDOFF_MARKER_RE = /\[HANDOFF:([^:\]\s]+):([^\]]*)\]\s*$/m;
 export function buildSkillsSupplement(skills) {
   if (!Array.isArray(skills) || skills.length === 0) return "";
 
-  const lines = skills.map((s) => {
+  const format = (s) => {
     const icon = s.icon || "✦";
     const name = s.name || s.id || "未命名技能";
     const desc = s.desc ? `: ${s.desc}` : "";
-    return `- ${icon} ${name}${desc}`;
-  });
+    // 真工具标注对应的函数名，模型才知道这项技能该用哪个 function 兑现
+    const bind = s.tool ? `（可调用函数 \`${s.tool}\`）` : "";
+    return `- ${icon} ${name}${desc}${bind}`;
+  };
 
-  return [
-    "## 你可用的技能",
-    ...lines,
-    "",
-    "请在回复中主动运用上述技能；必要时简要说明正在使用哪项技能。",
-  ].join("\n");
+  const executable = skills.filter((s) => s.tool);
+  const promptOnly = skills.filter((s) => !s.tool);
+
+  const lines = ["## 你可用的技能"];
+
+  if (executable.length) {
+    lines.push(
+      "",
+      "### 可执行工具（真实调用，结果可信）",
+      ...executable.map(format),
+      "",
+      "涉及这些能力时必须实际调用对应函数拿真实结果，不要凭记忆或推测作答。"
+    );
+  }
+
+  if (promptOnly.length) {
+    lines.push("");
+    if (executable.length) lines.push("### 行事风格技能");
+    lines.push(...promptOnly.map(format));
+  }
+
+  lines.push("", "请在回复中主动运用上述技能；必要时简要说明正在使用哪项技能。");
+  return lines.join("\n");
 }
 
 /**
@@ -73,42 +92,82 @@ export function buildHandoffSupplement(agentLinks, allAgents = [], structured = 
   return intro.join("\n");
 }
 
+const pad2 = (n) => String(n).padStart(2, "0");
+
 /**
- * 解析客户端时间
- * @param {string|undefined} clientTime - ISO 字符串或 HH:mm
- * @returns {{ date: Date, timeStr: string, dateStr: string, minutes: number }|null}
+ * 由「墙上时钟」字段构造时间信息。
+ * 全程不碰 Date 的本地时区取值器，因此不受服务端时区（Vercel 为 UTC）影响。
+ * @param {{year?:number, month?:number, day?:number, hour:number, minute:number}} f
+ * @returns {{ timeStr: string, dateStr: string, minutes: number }}
  */
-function parseClientTime(clientTime) {
+function makeTimeInfo({ year, month, day, hour, minute }) {
+  const timeStr = `${pad2(hour)}:${pad2(minute)}`;
+  const dateStr = year
+    ? `${year}-${pad2(month)}-${pad2(day)} ${timeStr}`
+    : timeStr;
+  return { timeStr, dateStr, minutes: hour * 60 + minute };
+}
+
+/**
+ * 把绝对时刻按指定时区偏移换算成墙上时钟。
+ * @param {number} epochMs
+ * @param {number} tzOffset - 相对 UTC 的分钟数，东八区为 +480
+ */
+export function wallClockFromEpoch(epochMs, tzOffset) {
+  const shifted = new Date(epochMs + tzOffset * 60000);
+  return makeTimeInfo({
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+  });
+}
+
+/**
+ * 解析客户端时间。
+ *
+ * 优先接受「本地墙上时钟」字符串（如 2026-07-16T21:30:00 / 2026-07-16 21:30 / 21:30），
+ * 直接按字面字段取值。若传入的是带 Z 或 ±hh:mm 的绝对时刻，则必须同时给出 tzOffset
+ * 才能还原用户本地时间；给不出就返回 null —— 宁可不注入时间，也不注入错误的时间。
+ *
+ * @param {string|undefined} clientTime
+ * @param {number|undefined} tzOffset - 相对 UTC 的分钟数，东八区为 +480
+ * @returns {{ timeStr: string, dateStr: string, minutes: number }|null}
+ */
+function parseClientTime(clientTime, tzOffset) {
   if (!clientTime || typeof clientTime !== "string") return null;
 
   const trimmed = clientTime.trim();
 
-  // 仅 HH:mm
-  const hmMatch = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
-  if (hmMatch) {
-    const now = new Date();
-    now.setHours(Number(hmMatch[1]), Number(hmMatch[2]), 0, 0);
-    return formatTimeInfo(now);
+  // 仅 HH:mm —— 本身就是墙上时钟
+  const hm = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (hm) {
+    const hour = Number(hm[1]);
+    const minute = Number(hm[2]);
+    if (hour > 23 || minute > 59) return null;
+    return makeTimeInfo({ hour, minute });
   }
 
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return formatTimeInfo(parsed);
-}
+  // 无时区后缀的本地时间 —— 按字面字段取值，不经过 Date 解析
+  const local =
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(trimmed);
+  if (local) {
+    const [, year, month, day, hour, minute] = local.map(Number);
+    if (hour > 23 || minute > 59) return null;
+    return makeTimeInfo({ year, month, day, hour, minute });
+  }
 
-/**
- * @param {Date} date
- */
-function formatTimeInfo(date) {
-  const pad = (n) => String(n).padStart(2, "0");
-  const timeStr = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${timeStr}`;
-  return {
-    date,
-    timeStr,
-    dateStr,
-    minutes: date.getHours() * 60 + date.getMinutes(),
-  };
+  // 带时区的绝对时刻：只有拿到 tzOffset 才能还原成用户本地时间
+  const absolute = /(?:Z|[+-]\d{2}:?\d{2})$/.test(trimmed);
+  if (absolute) {
+    if (!Number.isFinite(tzOffset)) return null;
+    const parsed = Date.parse(trimmed);
+    if (Number.isNaN(parsed)) return null;
+    return wallClockFromEpoch(parsed, tzOffset);
+  }
+
+  return null;
 }
 
 /**
@@ -145,9 +204,10 @@ function findNearbyReminders(reminders, now) {
  * 格式化 schedule 为 system 补充段（含时间感知）
  * @param {object|undefined} schedule
  * @param {string|undefined} clientTime
+ * @param {number|undefined} tzOffset - 相对 UTC 的分钟数，东八区为 +480
  * @returns {string}
  */
-export function buildScheduleSupplement(schedule, clientTime) {
+export function buildScheduleSupplement(schedule, clientTime, tzOffset) {
   if (!schedule || typeof schedule !== "object") return "";
 
   const rhythmLabels = {
@@ -173,7 +233,7 @@ export function buildScheduleSupplement(schedule, clientTime) {
     lines.push("", `主动关心话题：${schedule.careTopics.join("、")}`);
   }
 
-  const now = parseClientTime(clientTime);
+  const now = parseClientTime(clientTime, tzOffset);
   if (now) {
     lines.push("", `当前用户本地时间：${now.dateStr}`);
     lines.push(
@@ -196,11 +256,11 @@ export function buildScheduleSupplement(schedule, clientTime) {
 /**
  * 拼接完整 runtime system prompt
  * @param {object} agent
- * @param {{ clientTime?: string, allAgents?: object[], structured?: boolean }} options
+ * @param {{ clientTime?: string, tzOffset?: number, allAgents?: object[], structured?: boolean }} options
  * @returns {string}
  */
 export function buildRuntimeSystem(agent, options = {}) {
-  const { clientTime, allAgents = [], structured = false } = options;
+  const { clientTime, tzOffset, allAgents = [], structured = false } = options;
   const parts = [agent.system || ""];
 
   const skillsBlock = buildSkillsSupplement(agent.skills);
@@ -209,7 +269,7 @@ export function buildRuntimeSystem(agent, options = {}) {
   const handoffBlock = buildHandoffSupplement(agent.agentLinks, allAgents, structured);
   if (handoffBlock) parts.push(handoffBlock);
 
-  const scheduleBlock = buildScheduleSupplement(agent.schedule, clientTime);
+  const scheduleBlock = buildScheduleSupplement(agent.schedule, clientTime, tzOffset);
   if (scheduleBlock) parts.push(scheduleBlock);
 
   return parts.join("\n\n");
@@ -266,6 +326,47 @@ export function parseHandoffMarker(reply, agentLinks) {
       label: link.label || targetId,
     },
   };
+}
+
+/** 标记开头（不要求出现在结尾：模型偶尔会在标记后继续写，那之后的正文一并扣住等收尾重排） */
+const HANDOFF_MARKER_HEAD_RE = /^\[HANDOFF:[^:\]\s]+:[^\]]*\]/;
+
+/** handoff 标记的字面前缀，用于判断半截标记 */
+const HANDOFF_PREFIX = "[HANDOFF:";
+
+/**
+ * 流式输出时把缓冲区切成「可安全下发」与「需扣住」两段。
+ *
+ * 模型会在正文末尾输出 [HANDOFF:id:reason]，这个标记对用户不可见。流式下发时
+ * 标记是逐字到达的，若照单全收，用户会亲眼看到 "[HAND..." 一个个蹦出来。
+ *
+ * 从左往右找第一个「可能开启标记」的中括号：正文里的普通中括号（如「见 [注1]」、
+ * Markdown 链接）必须照常下发，不能卡住输出；只有标记本身及其之后的内容才扣住，
+ * 留到流结束后按剥离过的正文统一补发。
+ *
+ * @param {string} buf - 尚未下发的缓冲
+ * @returns {[string, string]} [可下发文本, 需继续扣住的尾巴]
+ */
+export function splitStreamSafe(buf) {
+  for (let from = 0; ; ) {
+    const idx = buf.indexOf("[", from);
+    if (idx === -1) return [buf, ""];
+
+    const tail = buf.slice(idx);
+
+    // 已成形的标记：从这里起全部扣住
+    if (HANDOFF_MARKER_HEAD_RE.test(tail)) return [buf.slice(0, idx), tail];
+
+    // 尚未闭合，且还可能长成标记：扣住等后续字符
+    if (
+      !tail.includes("]") &&
+      HANDOFF_PREFIX.startsWith(tail.slice(0, HANDOFF_PREFIX.length))
+    ) {
+      return [buf.slice(0, idx), tail];
+    }
+
+    from = idx + 1; // 这个中括号只是正文，继续往后找
+  }
 }
 
 /**

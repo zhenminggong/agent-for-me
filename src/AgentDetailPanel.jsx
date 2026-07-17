@@ -84,26 +84,41 @@ function SkillsSection({ skills, agentId, onConfigureSkills }) {
     </a>
   );
 
+  const toolCount = skills.filter((s) => s.tool).length;
+
   return (
     <DetailAccordion
       id="skills"
       icon="⚡"
       title="技能能力"
       defaultOpen={false}
-      summary={`${skills.length} 项`}
+      summary={toolCount ? `${skills.length} 项 · ${toolCount} 个真工具` : `${skills.length} 项`}
       titleExtra={configLink}
       badge={
-        <span className="runtime-badge" title="已注入对话 system prompt">
-          运行时
-        </span>
+        toolCount ? (
+          <span className="runtime-badge tool-badge" title="模型可真实调用函数并拿到结果">
+            可执行
+          </span>
+        ) : (
+          <span className="runtime-badge" title="已注入对话 system prompt">
+            运行时
+          </span>
+        )
       }
     >
       <div className="skills-grid">
         {skills.map((s) => (
-          <div key={s.id} className="skill-card">
+          <div key={s.id} className={`skill-card${s.tool ? " is-tool" : ""}`}>
             <span className="skill-card-icon">{s.icon || "✦"}</span>
             <div className="skill-card-body">
-              <span className="skill-card-name">{s.name}</span>
+              <span className="skill-card-name">
+                {s.name}
+                {s.tool && (
+                  <span className="skill-tool-tag" title={`模型可调用函数 ${s.tool}()`}>
+                    🔧 {s.tool}
+                  </span>
+                )}
+              </span>
               {s.desc && <span className="skill-card-desc">{s.desc}</span>}
             </div>
           </div>

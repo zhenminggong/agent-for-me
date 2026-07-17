@@ -5,6 +5,19 @@
  */
 
 import { listAgents } from "../_store.js";
+import { wallClockFromEpoch } from "../_runtime.js";
+
+/** 提醒时段用的默认时区（分钟，东八区 +480）；可用 COMPANION_TZ_OFFSET 覆盖 */
+const DEFAULT_TZ_OFFSET = 480;
+
+/**
+ * 读取运营时区偏移。Vercel 函数跑在 UTC，直接用 getHours() 会错 8 小时。
+ * @returns {number}
+ */
+function getTzOffset() {
+  const raw = Number(process.env.COMPANION_TZ_OFFSET);
+  return Number.isFinite(raw) ? raw : DEFAULT_TZ_OFFSET;
+}
 
 /**
  * HH:mm → 当日分钟数
@@ -17,20 +30,19 @@ function timeToMinutes(time) {
 }
 
 /**
- * 找出当前小时窗口内（±30 分钟）的提醒
+ * 找出当前时刻 ±30 分钟内的提醒（跨午夜环绕）
  * @param {Array<{time:string, label:string}>} reminders
- * @param {Date} now
+ * @param {number} currentMin - 当日分钟数（已按运营时区换算）
  */
-function activeReminders(reminders, now) {
+function activeReminders(reminders, currentMin) {
   if (!Array.isArray(reminders)) return [];
-  const currentMin = now.getHours() * 60 + now.getMinutes();
   const windowMin = 30;
 
   return reminders.filter((r) => {
     const target = timeToMinutes(r.time);
     if (target == null) return false;
     const diff = Math.abs(currentMin - target);
-    return diff <= windowMin;
+    return diff <= windowMin || diff >= 24 * 60 - windowMin;
   });
 }
 
@@ -47,14 +59,15 @@ export default async function handler(req, res) {
   try {
     const { agents } = await listAgents();
     const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const tzOffset = getTzOffset();
+    const local = wallClockFromEpoch(now.getTime(), tzOffset);
 
     const companions = agents.filter(
       (a) => a.schedule && (a.schedule.dailyReminders?.length || a.schedule.careTopics?.length)
     );
 
     const snapshot = companions.map((agent) => {
-      const active = activeReminders(agent.schedule?.dailyReminders, now);
+      const active = activeReminders(agent.schedule?.dailyReminders, local.minutes);
       return {
         agentId: agent.id,
         agentName: agent.name,
@@ -65,12 +78,13 @@ export default async function handler(req, res) {
     });
 
     // MVP：仅 log + 返回快照，后续可写入 KV 供 push 通知
-    console.log("[companion-reminder]", timeStr, JSON.stringify(snapshot));
+    console.log("[companion-reminder]", local.timeStr, JSON.stringify(snapshot));
 
     return res.status(200).json({
       ok: true,
       serverTime: now.toISOString(),
-      localTime: timeStr,
+      localTime: local.timeStr,
+      tzOffset,
       companions: snapshot,
     });
   } catch (err) {

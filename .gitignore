@@ -10,6 +10,11 @@ dist/
 _*log*.txt
 _*_err.txt
 _*_out.txt
+
+# 本地调试产物（可能含密钥，勿提交）
+_tmp_*
+_vercel_*
+_deploy_*
 _api_check.txt
 api-test-results.txt
 build-err.txt

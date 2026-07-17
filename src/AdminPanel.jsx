@@ -14,7 +14,7 @@ const EMPTY = {
   skills: [], agentLinks: [], schedule: null,
 };
 
-const EMPTY_SKILL = { id: "", name: "", desc: "", icon: "✦" };
+const EMPTY_SKILL = { id: "", name: "", desc: "", icon: "✦", tool: "" };
 const EMPTY_LINK = { targetId: "", label: "", trigger: "" };
 const EMPTY_REMINDER = { time: "09:00", label: "" };
 
@@ -41,6 +41,8 @@ export default function AdminPanel({
   const [loginErr, setLoginErr] = useState("");
 
   const [list, setList] = useState([]);
+  /** 服务端注册表里的可执行工具，供技能绑定下拉；不在前端硬编码，避免与注册表漂移 */
+  const [availableTools, setAvailableTools] = useState([]);
   const [editing, setEditing] = useState(null);
   const [versions, setVersions] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -63,6 +65,7 @@ export default function AdminPanel({
     }
     const data = await resp.json();
     setList(data.agents || []);
+    setAvailableTools(data.tools || []);
   };
 
   useEffect(() => {
@@ -101,6 +104,7 @@ export default function AdminPanel({
       setStoredAdminPassword(pwd);
       setAuthed(true);
       setList(data.agents || []);
+      setAvailableTools(data.tools || []);
       setLoginPwd("");
     } catch (err) {
       setLoginErr(err.message || "网络错误");
@@ -426,6 +430,9 @@ export default function AdminPanel({
                         <span className="admin-section-title">⚡ 技能能力</span>
                         <button type="button" className="mini-add-btn" onClick={addSkill}>＋ 添加</button>
                       </div>
+                      <p className="admin-section-hint">
+                        绑定「可执行工具」的技能，模型会真实调用函数并拿到结果；不绑定的技能仅注入 prompt 影响风格。
+                      </p>
                       {(editing.skills || []).map((sk, i) => (
                         <div key={i} className="admin-card-row">
                           <input
@@ -453,6 +460,20 @@ export default function AdminPanel({
                             onChange={(e) => updateSkill(i, "desc", e.target.value)}
                             placeholder="描述"
                           />
+                          <select
+                            className={`mini-input flex2${sk.tool ? " tool-bound" : ""}`}
+                            value={sk.tool || ""}
+                            onChange={(e) => updateSkill(i, "tool", e.target.value)}
+                            title={
+                              availableTools.find((t) => t.name === sk.tool)?.description ||
+                              "绑定可执行工具后，模型可真实调用"
+                            }
+                          >
+                            <option value="">— 仅 prompt —</option>
+                            {availableTools.map((t) => (
+                              <option key={t.name} value={t.name}>🔧 {t.name}</option>
+                            ))}
+                          </select>
                           <button type="button" className="mini-del-btn" onClick={() => removeSkill(i)}>✕</button>
                         </div>
                       ))}
