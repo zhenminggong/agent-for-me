@@ -178,6 +178,46 @@ test("readDashboard 返回总计 + N 天序列 + 补零", async () => {
   }
 });
 
+// ---------------------------------------------------------------- 行业分类
+
+test("recordChat 按 <category>__<verdict> 累加，readDashboard 聚合成行业数组", async () => {
+  const kv = fakeKv();
+  __setKvForTest(kv);
+  try {
+    await recordChat({ verdict: "reject", category: "legal" }, 480);
+    await recordChat({ verdict: "reject", category: "legal" }, 480);
+    await recordChat({ verdict: "defer", category: "legal" }, 480);
+    await recordChat({ verdict: "worth_doing", category: "retail" }, 480);
+
+    const dash = await readDashboard(7, 480);
+    const legal = dash.categories.find((c) => c.category === "legal");
+    const retail = dash.categories.find((c) => c.category === "retail");
+
+    assert.equal(legal.reject, 2);
+    assert.equal(legal.defer, 1);
+    assert.equal(legal.total, 3);
+    assert.ok(Math.abs(legal.rejectRate - 2 / 3) < 1e-9);
+    assert.equal(retail.worth, 1);
+    assert.equal(retail.total, 1);
+    // 按总数降序：legal(3) 在 retail(1) 前
+    assert.equal(dash.categories[0].category, "legal");
+  } finally {
+    __setKvForTest(null);
+  }
+});
+
+test("无 verdict 的对话不写行业分类", async () => {
+  const kv = fakeKv();
+  __setKvForTest(kv);
+  try {
+    await recordChat({ tokens: 100, category: "legal" }, 480); // 没 verdict
+    const dash = await readDashboard(7, 480);
+    assert.equal(dash.categories.length, 0);
+  } finally {
+    __setKvForTest(null);
+  }
+});
+
 // ---------------------------------------------------------------- 降级
 
 test("未配 KV 时全部静默 no-op，不抛错", async () => {

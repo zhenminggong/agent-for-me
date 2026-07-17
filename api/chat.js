@@ -389,7 +389,7 @@ export default async function handler(req, res) {
       };
       if (handoff) body.handoff = handoff;
       recordChat(
-        { tokens: usageBox.tokens, handoff: !!handoff, verdict: report.verdict },
+        { tokens: usageBox.tokens, handoff: !!handoff, verdict: report.verdict, category: report.category },
         typeof tzOffset === "number" ? tzOffset : undefined
       ).catch(() => {});
       return res.status(200).json(body);

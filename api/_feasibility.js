@@ -18,6 +18,38 @@ const DIMENSION_IDS = [
   "alternativeCost",
 ];
 
+/**
+ * 业务场景行业分类（固定枚举）。
+ * 让裁决官在结构化输出里顺手给出 category，用于运营看板按行业统计"劝退率"。
+ * 用固定 id 而非自由文本，才能聚合；识别不出时归入 other。
+ */
+const CATEGORY_LABELS = {
+  retail: "零售/电商",
+  food: "餐饮",
+  education: "教育",
+  legal: "法律",
+  medical: "医疗健康",
+  finance: "金融",
+  manufacturing: "制造/工业",
+  content: "内容/营销",
+  service: "客服/服务",
+  hr: "人力/行政",
+  logistics: "物流/供应链",
+  other: "其他",
+};
+
+const CATEGORY_IDS = Object.keys(CATEGORY_LABELS);
+
+/**
+ * 规范化模型给的 category：命中枚举取之，否则归 other。
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normalizeCategory(value) {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return CATEGORY_IDS.includes(v) ? v : "other";
+}
+
 /** 六维 reason 为空时，前端展示的占位文案 */
 const REASON_PLACEHOLDER = "（需补充场景信息后再评估）";
 
@@ -204,13 +236,17 @@ export function parseFeasibilityReport(raw) {
   const emptyReasonCount = countEmptyReasons(allDims);
   const lowQuality = identicalScores || emptyReasonCount > 2;
 
+  const category = normalizeCategory(data.category);
+
   return {
     verdict,
     verdictLabel,
-    summary,
+    category,
+    categoryLabel: CATEGORY_LABELS[category],
     confidence: ["low", "medium", "high"].includes(data.confidence)
       ? data.confidence
       : "medium",
+    summary,
     gate1: {
       passed: gate1Passed,
       summary: gate1Summary,
@@ -287,4 +323,4 @@ export function ensureJsonHintInMessages(messages) {
   return cloned;
 }
 
-export { VERDICT_LABELS, DIMENSION_IDS, REASON_PLACEHOLDER };
+export { VERDICT_LABELS, DIMENSION_IDS, REASON_PLACEHOLDER, CATEGORY_LABELS, CATEGORY_IDS, normalizeCategory };

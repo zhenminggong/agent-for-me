@@ -1617,3 +1617,122 @@ body {
   color: #fff;
   background: var(--accent);
 }
+
+/* ==================== 裁决官洞察 ==================== */
+.section-tag {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-2));
+  border: 1px solid var(--line);
+}
+.judge-top {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.judge-rate {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 14px 20px;
+  border-radius: 12px;
+  background: color-mix(in srgb, #c45c4a 10%, var(--panel-2));
+  border: 1px solid color-mix(in srgb, #c45c4a 30%, var(--line));
+  min-width: 120px;
+}
+.judge-rate-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  color: #c45c4a;
+  font-family: 'Space Grotesk', 'Noto Sans SC', sans-serif;
+}
+.judge-rate-label { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
+.judge-rate-sub { margin-top: 3px; font-size: 11px; color: var(--text-dim); }
+.judge-insight-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.judge-insight-text b { color: var(--text); font-weight: 650; }
+
+.judge-cols {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 22px;
+}
+@media (max-width: 640px) {
+  .judge-cols { grid-template-columns: 1fr; }
+  .judge-top { flex-direction: column; align-items: stretch; }
+}
+.judge-col-title { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.judge-bar { fill: #c45c4a; opacity: 0.8; }
+.judge-bar:hover { opacity: 1; }
+
+.cat-list { display: flex; flex-direction: column; gap: 8px; }
+.cat-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.cat-name { flex-shrink: 0; width: 72px; color: var(--text); }
+.cat-bar-wrap {
+  flex: 1;
+  height: 14px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--line) 60%, transparent);
+  overflow: hidden;
+}
+.cat-bar {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: color-mix(in srgb, #c45c4a 75%, var(--accent));
+  transition: width .3s;
+}
+.cat-meta { flex-shrink: 0; color: var(--text-dim); font-size: 11.5px; white-space: nowrap; }
+.cat-meta b { color: var(--text); }
+
+/* ==================== 看板卡片分组 ==================== */
+.metrics-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.metric-group {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.metric-group.judge-group {
+  flex: 1 1 300px;
+}
+.metric-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  padding-left: 2px;
+}
+.metric-group-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--accent) 80%, #000);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+/* 分组内的卡片网格：自适应铺满该组宽度 */
+.metric-group .metrics-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 0;
+}
+/* 裁决官组用淡色描边，视觉上占 C 位 */
+.judge-group .metric-card {
+  border-color: color-mix(in srgb, #c0a15f 28%, var(--line));
+  background: color-mix(in srgb, #c0a15f 4%, var(--panel-2));
+}

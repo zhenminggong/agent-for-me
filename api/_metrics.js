@@ -9,6 +9,7 @@
 //   metrics:uv:total             （HyperLogLog）累计独立访客
 //   metrics:uv:<YYYY-MM-DD>      （HyperLogLog）当日独立访客
 //   metrics:firstDay             （string）第一条数据的日期，用于前端算"运营天数"
+//   metrics:categories           （hash）裁决按行业统计，field 形如 `<catId>__<verdict>`
 //
 // 用 hincrby 原子累加、HLL 估算去重 UV——都是 O(1)、并发安全，不用读改写。
 
@@ -17,6 +18,7 @@ const DAILY_PREFIX = "metrics:daily:";
 const UV_TOTAL_KEY = "metrics:uv:total";
 const UV_DAILY_PREFIX = "metrics:uv:";
 const FIRST_DAY_KEY = "metrics:firstDay";
+const CATEGORIES_KEY = "metrics:categories";
 
 const DAILY_TTL_SEC = 400 * 86400; // 每日明细留约 13 个月
 
@@ -110,20 +112,32 @@ export async function recordPageView(visitorId, tzOffset = 480) {
 }
 
 /**
- * 一次对话完成后记录：对话数、token、工具调用、handoff、裁决结果。
- * @param {{tokens?:number, toolCalls?:number, handoff?:boolean, verdict?:string}} m
+ * 一次对话完成后记录：对话数、token、工具调用、handoff、裁决结果、行业分类。
+ * @param {{tokens?:number, toolCalls?:number, handoff?:boolean, verdict?:string, category?:string}} m
  * @param {number} [tzOffset]
  */
 export async function recordChat(
-  { tokens = 0, toolCalls = 0, handoff = false, verdict } = {},
+  { tokens = 0, toolCalls = 0, handoff = false, verdict, category } = {},
   tzOffset = 480
 ) {
+  const validVerdict = verdict && ["worth_doing", "defer", "reject"].includes(verdict);
+
   const inc = { chats: 1, tokens, toolCalls };
   if (handoff) inc.handoffs = 1;
-  if (verdict && ["worth_doing", "defer", "reject"].includes(verdict)) {
-    inc[`verdict_${verdict}`] = 1;
-  }
+  if (validVerdict) inc[`verdict_${verdict}`] = 1;
   await bumpMetrics(inc, tzOffset);
+
+  // 裁决才有行业分类；累加到 categories hash 的 `<catId>__<verdict>` 字段
+  if (validVerdict && typeof category === "string" && category) {
+    const kv = await getKV();
+    if (kv) {
+      try {
+        await kv.hincrby(CATEGORIES_KEY, `${category}__${verdict}`, 1);
+      } catch (err) {
+        console.error("[metrics] category bump failed (ignored):", err.message);
+      }
+    }
+  }
 }
 
 /** 把 KV hash（值为字符串）转成按 METRIC_FIELDS 补零的数字对象 */
@@ -131,6 +145,33 @@ function normalizeCounts(hash) {
   const out = {};
   for (const f of METRIC_FIELDS) out[f] = Number(hash?.[f]) || 0;
   return out;
+}
+
+/**
+ * 把 categories hash（field=`<catId>__<verdict>`）聚合成按行业的数组，
+ * 每项含三种裁决数、总数、劝退率，按总数降序。
+ * @param {Record<string,string>|null} hash
+ * @returns {Array<{category:string, worth:number, defer:number, reject:number, total:number, rejectRate:number}>}
+ */
+function aggregateCategories(hash) {
+  const byCat = {};
+  for (const [field, val] of Object.entries(hash || {})) {
+    const sep = field.indexOf("__");
+    if (sep < 0) continue;
+    const cat = field.slice(0, sep);
+    const verdict = field.slice(sep + 2);
+    const n = Number(val) || 0;
+    if (!byCat[cat]) byCat[cat] = { category: cat, worth: 0, defer: 0, reject: 0 };
+    if (verdict === "worth_doing") byCat[cat].worth += n;
+    else if (verdict === "defer") byCat[cat].defer += n;
+    else if (verdict === "reject") byCat[cat].reject += n;
+  }
+  return Object.values(byCat)
+    .map((c) => {
+      const total = c.worth + c.defer + c.reject;
+      return { ...c, total, rejectRate: total ? c.reject / total : 0 };
+    })
+    .sort((a, b) => b.total - a.total);
 }
 
 /**
@@ -150,10 +191,11 @@ export async function readDashboard(days = 14, tzOffset = 480) {
     dayList.push(new Date(Date.now() + tzOffset * 60000 - i * 86400000).toISOString().slice(0, 10));
   }
 
-  const [total, uvTotal, firstDay, ...dailyHashes] = await Promise.all([
+  const [total, uvTotal, firstDay, categoriesHash, ...dailyHashes] = await Promise.all([
     kv.hgetall(TOTAL_KEY),
     kv.pfcount(UV_TOTAL_KEY),
     kv.get(FIRST_DAY_KEY),
+    kv.hgetall(CATEGORIES_KEY),
     ...dayList.map((d) => kv.hgetall(DAILY_PREFIX + d)),
   ]);
 
@@ -168,6 +210,7 @@ export async function readDashboard(days = 14, tzOffset = 480) {
   return {
     total: { ...normalizeCounts(total), uv: Number(uvTotal) || 0 },
     daily,
+    categories: aggregateCategories(categoriesHash),
     firstDay: firstDay || dayList[dayList.length - 1],
     generatedAt: new Date().toISOString(),
   };

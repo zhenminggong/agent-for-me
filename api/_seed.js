@@ -77,6 +77,7 @@ JSON 结构：
 {
   "verdict": "worth_doing|defer|reject",
   "verdictLabel": "能做且值得|能做但不值|不建议用 AI",
+  "category": "retail|food|education|legal|medical|finance|manufacturing|content|service|hr|logistics|other",
   "summary": "解释为何如此裁决的一句话，不得与 verdictLabel 相同",
   "confidence": "low|medium|high",
   "gate1": {
@@ -103,7 +104,8 @@ JSON 结构：
   "nextSteps": ["可执行的建议下一步1", "建议下一步2"]
 }
 
-risks/alternatives/questions/nextSteps 各 0–3 条，讲人话，必须贴合用户场景。`,
+risks/alternatives/questions/nextSteps 各 0–3 条，讲人话，必须贴合用户场景。
+category：按用户所述业务判断所属行业，从上面枚举里选一个最贴切的；实在无法归类才用 other。`,
   },
   {
     id: "companion",
