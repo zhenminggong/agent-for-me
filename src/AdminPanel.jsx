@@ -5,6 +5,7 @@ import {
   clearStoredAdminPassword,
   adminFetch,
 } from "./adminAuth.js";
+import MetricsDashboard from "./MetricsDashboard.jsx";
 
 const EMPTY = {
   id: "", name: "", tagline: "", desc: "",
@@ -36,6 +37,7 @@ export default function AdminPanel({
   focusSection = null,
 }) {
   const [authed, setAuthed] = useState(!!getStoredAdminPassword());
+  const [view, setView] = useState("dashboard"); // dashboard | agents
   const [loginPwd, setLoginPwd] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginErr, setLoginErr] = useState("");
@@ -149,6 +151,7 @@ export default function AdminPanel({
     if (!target) return;
 
     focusAppliedRef.current = focusKey;
+    setView("agents"); // 深链是要编辑某个 Agent，切到管理视图
 
     (async () => {
       await startEdit(target);
@@ -355,6 +358,27 @@ export default function AdminPanel({
           </form>
         ) : (
           <>
+            <div className="admin-tabs">
+              <button
+                type="button"
+                className={`admin-tab${view === "dashboard" ? " active" : ""}`}
+                onClick={() => setView("dashboard")}
+              >
+                📊 运营看板
+              </button>
+              <button
+                type="button"
+                className={`admin-tab${view === "agents" ? " active" : ""}`}
+                onClick={() => setView("agents")}
+              >
+                ⚙ Agent 管理
+              </button>
+            </div>
+
+            {view === "dashboard" ? (
+              <MetricsDashboard />
+            ) : (
+              <>
             {!editable && (
               <div className="warn">
                 当前未配置数据库（Vercel KV），处于只读模式，无法保存。
@@ -602,6 +626,8 @@ export default function AdminPanel({
                 )}
               </div>
             </div>
+              </>
+            )}
           </>
         )}
       </div>

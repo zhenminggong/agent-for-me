@@ -20,6 +20,7 @@ import {
 } from "./_runtime.js";
 import { enforceRateLimit } from "./_ratelimit.js";
 import { buildToolDefinitions, describeTool, executeTool } from "./_tools.js";
+import { recordChat } from "./_metrics.js";
 
 const DASHSCOPE_URL =
   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
@@ -33,10 +34,12 @@ function isStructuredAdvisor(agent) {
 }
 
 /**
- * 调用 DashScope 聊天接口
- * @param {object} params
+ * 调用 DashScope 聊天接口（非流式）
+ * @param {string} apiKey
+ * @param {object} payload
+ * @param {{tokens:number}} [usageBox] - 传入则累加本次 total_tokens，用于埋点
  */
-async function callDashScope(apiKey, payload) {
+async function callDashScope(apiKey, payload, usageBox) {
   const resp = await fetch(DASHSCOPE_URL, {
     method: "POST",
     headers: {
@@ -52,6 +55,9 @@ async function callDashScope(apiKey, payload) {
   }
 
   const data = await resp.json();
+  if (usageBox && data.usage) {
+    usageBox.tokens += Number(data.usage.total_tokens) || 0;
+  }
   return data.choices?.[0]?.message?.content || "";
 }
 
@@ -60,16 +66,22 @@ async function callDashScope(apiKey, payload) {
  * DashScope 兼容模式走 OpenAI 的 SSE 格式：每行 `data: {...}`，以 `data: [DONE]` 收尾。
  * @param {string} apiKey
  * @param {object} payload
+ * @param {{tokens:number}} [usageBox] - 传入则把最后一帧的 total_tokens 写回，用于埋点
  * @returns {AsyncGenerator<object>}
  */
-async function* streamDashScope(apiKey, payload) {
+async function* streamDashScope(apiKey, payload, usageBox) {
   const resp = await fetch(DASHSCOPE_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ ...payload, stream: true }),
+    // include_usage：末尾多一帧 choices 为空、带 usage 的 chunk，用于统计 token
+    body: JSON.stringify({
+      ...payload,
+      stream: true,
+      stream_options: { include_usage: true },
+    }),
   });
 
   if (!resp.ok) {
@@ -95,7 +107,11 @@ async function* streamDashScope(apiKey, payload) {
       if (payloadStr === "[DONE]") return;
 
       try {
-        const choice = JSON.parse(payloadStr).choices?.[0];
+        const parsed = JSON.parse(payloadStr);
+        if (usageBox && parsed.usage) {
+          usageBox.tokens = Number(parsed.usage.total_tokens) || usageBox.tokens;
+        }
+        const choice = parsed.choices?.[0];
         if (choice) yield choice;
       } catch {
         /* 保活注释或半截 JSON，跳过 */
@@ -125,13 +141,14 @@ function accumulateToolCalls(acc, deltas) {
  * @param {string} apiKey
  * @param {object} payload
  * @param {(text:string)=>void} onContent
- * @returns {Promise<{ content: string, toolCalls: object[] }>}
+ * @returns {Promise<{ content: string, toolCalls: object[], tokens: number }>}
  */
 async function streamRound(apiKey, payload, onContent) {
   const toolCalls = [];
+  const usageBox = { tokens: 0 };
   let content = "";
 
-  for await (const choice of streamDashScope(apiKey, payload)) {
+  for await (const choice of streamDashScope(apiKey, payload, usageBox)) {
     const delta = choice.delta || {};
     if (delta.content) {
       content += delta.content;
@@ -140,7 +157,7 @@ async function streamRound(apiKey, payload, onContent) {
     if (delta.tool_calls) accumulateToolCalls(toolCalls, delta.tool_calls);
   }
 
-  return { content, toolCalls: toolCalls.filter(Boolean) };
+  return { content, toolCalls: toolCalls.filter(Boolean), tokens: usageBox.tokens };
 }
 
 /**
@@ -180,6 +197,8 @@ async function handleStreamingChat(res, apiKey, payload, agent, toolCtx) {
   let raw = "";
   let held = "";
   let emittedLen = 0;
+  let totalTokens = 0; // 跨轮累加（每轮 LLM 调用都算）
+  let totalToolCalls = 0;
 
   /** 下发正文增量，同时扣住可能构成 handoff 标记的尾巴 */
   const emit = (text) => {
@@ -200,7 +219,8 @@ async function handleStreamingChat(res, apiKey, payload, agent, toolCtx) {
         roundPayload.parallel_tool_calls = true;
       }
 
-      const { content, toolCalls } = await streamRound(apiKey, roundPayload, emit);
+      const { content, toolCalls, tokens } = await streamRound(apiKey, roundPayload, emit);
+      totalTokens += tokens;
 
       if (!toolCalls.length) break; // 模型给出最终答复
 
@@ -212,6 +232,7 @@ async function handleStreamingChat(res, apiKey, payload, agent, toolCtx) {
       });
 
       for (const call of toolCalls) {
+        totalToolCalls += 1;
         const meta = describeTool(agent.skills, call.function.name);
         send({ type: "status", tool: call.function.name, label: meta.name, icon: meta.icon });
 
@@ -226,6 +247,7 @@ async function handleStreamingChat(res, apiKey, payload, agent, toolCtx) {
       if (round === MAX_TOOL_ROUNDS - 1) {
         // 轮次耗尽仍在调工具：再要一次纯文本收口，避免用户拿到空回复
         const final = await streamRound(apiKey, { ...payload, messages }, emit);
+        totalTokens += final.tokens;
         if (!final.content.trim()) emit("(工具调用未能收敛，请换个说法再试)");
       }
     }
@@ -240,6 +262,12 @@ async function handleStreamingChat(res, apiKey, payload, agent, toolCtx) {
     }
     if (handoff) send({ type: "handoff", handoff });
     send({ type: "done" });
+
+    // 埋点：不 await，也不让它的失败影响已完成的响应
+    recordChat(
+      { tokens: totalTokens, toolCalls: totalToolCalls, handoff: !!handoff },
+      toolCtx?.tzOffset
+    ).catch(() => {});
   } catch (err) {
     // 已发过 header，只能在流内报错
     send({ type: "error", error: `服务端异常: ${err.message}` });
@@ -302,7 +330,8 @@ export default async function handler(req, res) {
     payload.messages = ensureJsonHintInMessages(payload.messages);
     payload.response_format = { type: "json_object" };
 
-    let raw = await callDashScope(apiKey, payload);
+    const usageBox = { tokens: 0 }; // 累加裁决路径上多次调用的 token
+    let raw = await callDashScope(apiKey, payload, usageBox);
     let report = structured ? parseFeasibilityReport(raw) : null;
 
     // JSON 解析失败时重试一次
@@ -318,7 +347,7 @@ export default async function handler(req, res) {
           },
         ],
       };
-      raw = await callDashScope(apiKey, retryPayload);
+      raw = await callDashScope(apiKey, retryPayload, usageBox);
       report = parseFeasibilityReport(raw);
     }
 
@@ -335,7 +364,7 @@ export default async function handler(req, res) {
           },
         ],
       };
-      const retryRaw = await callDashScope(apiKey, qualityRetryPayload);
+      const retryRaw = await callDashScope(apiKey, qualityRetryPayload, usageBox);
       const retryReport = parseFeasibilityReport(retryRaw);
       if (retryReport && !retryReport.lowQuality) {
         raw = retryRaw;
@@ -359,6 +388,10 @@ export default async function handler(req, res) {
         structured: report,
       };
       if (handoff) body.handoff = handoff;
+      recordChat(
+        { tokens: usageBox.tokens, handoff: !!handoff, verdict: report.verdict },
+        typeof tzOffset === "number" ? tzOffset : undefined
+      ).catch(() => {});
       return res.status(200).json(body);
     }
 
@@ -367,6 +400,10 @@ export default async function handler(req, res) {
 
     const body = { reply };
     if (handoff) body.handoff = handoff;
+    recordChat(
+      { tokens: usageBox.tokens, handoff: !!handoff },
+      typeof tzOffset === "number" ? tzOffset : undefined
+    ).catch(() => {});
     return res.status(200).json(body);
   } catch (err) {
     return res.status(500).json({ error: `服务端异常: ${err.message}` });

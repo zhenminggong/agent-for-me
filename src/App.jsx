@@ -40,6 +40,35 @@ function localTzOffset() {
   return -new Date().getTimezoneOffset();
 }
 
+/** 取（或生成）匿名访客 id，存 localStorage，用于 UV 去重；不含任何个人信息 */
+function getVisitorId() {
+  const KEY = "agentteam:visitorId";
+  try {
+    let id = localStorage.getItem(KEY);
+    if (!id) {
+      id = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem(KEY, id);
+    }
+    return id;
+  } catch {
+    return null; // 隐私模式禁用了 storage：照常上报，只是 UV 会略偏高
+  }
+}
+
+/** 上报一次页面浏览。失败静默——统计不该影响用户体验 */
+function reportPageView() {
+  try {
+    fetch("/api/metrics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visitorId: getVisitorId(), tzOffset: localTzOffset() }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 响应是否为 SSE 流（非结构化 Agent 走流式，advisor 仍走 JSON） */
 function isEventStream(resp) {
   return (resp.headers.get("content-type") || "").includes("text/event-stream");
@@ -170,6 +199,9 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadAgents(); }, [loadAgents]);
+
+  // 每次载入上报一次浏览量（PV），按匿名 visitorId 去重成 UV
+  useEffect(() => { reportPageView(); }, []);
 
   // Hash 路由：#/admin 打开管理面板，并解析 ?agent= & section=
   useEffect(() => {
