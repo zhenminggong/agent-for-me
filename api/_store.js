@@ -28,8 +28,11 @@ function needsV2FieldsMigration(agent) {
   const seed = SEED_AGENTS.find((s) => s.id === agent.id);
   if (!seed) return false;
   const missingSkills = seed.skills?.length && !agent.skills?.length;
-  const missingLinks = seed.agentLinks?.length && !agent.agentLinks?.length;
   const missingSchedule = seed.schedule && !agent.schedule;
+  // 按 targetId 逐条判断：seed 里有、而当前 agent 没有的 handoff 链接（新增协作关系）
+  const missingLinks = !!seed.agentLinks?.some(
+    (sl) => !(agent.agentLinks || []).some((al) => al.targetId === sl.targetId)
+  );
   return missingSkills || missingLinks || missingSchedule;
 }
 
@@ -41,8 +44,15 @@ function mergeV2FieldsFromSeed(agent) {
   if (!seed) return agent;
   const next = { ...agent };
   if (seed.skills?.length && !next.skills?.length) next.skills = seed.skills;
-  if (seed.agentLinks?.length && !next.agentLinks?.length) next.agentLinks = seed.agentLinks;
   if (seed.schedule && !next.schedule) next.schedule = seed.schedule;
+  // 追加 seed 里新增、当前缺失的 handoff 链接（按 targetId 去重，不覆盖用户已有）
+  if (seed.agentLinks?.length) {
+    const existing = next.agentLinks || [];
+    const toAdd = seed.agentLinks.filter(
+      (sl) => !existing.some((al) => al.targetId === sl.targetId)
+    );
+    if (toAdd.length) next.agentLinks = [...existing, ...toAdd];
+  }
   return next;
 }
 
@@ -69,12 +79,28 @@ async function migrateAgentsIfNeeded(kv, agents) {
     return updated;
   });
 
+  // 追加 seed 里新增、KV 中还没有的 Agent（新示范 agent 随部署自动上架）
+  const presentIds = new Set(next.map((a) => a.id));
+  for (const seed of SEED_AGENTS) {
+    if (!presentIds.has(seed.id)) {
+      next.push({ ...seed });
+      changed = true;
+    }
+  }
+
   if (changed) await kv.set(KEY, next);
   return next;
 }
 
+let _kvOverride = null;
+/** 测试注入用：传入内存版 KV，传 null 复位 */
+export function __setKvForTest(kv) {
+  _kvOverride = kv;
+}
+
 // 动态加载 KV(没装/没配时优雅降级)
 async function getKV() {
+  if (_kvOverride) return _kvOverride;
   try {
     if (!process.env.KV_REST_API_URL) return null; // 没配 KV 环境变量
     const { kv } = await import("@vercel/kv");
