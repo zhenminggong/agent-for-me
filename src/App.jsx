@@ -5,6 +5,7 @@ import FeasibilityVerdict from "./FeasibilityVerdict.jsx";
 import AgentDetailPanel from "./AgentDetailPanel.jsx";
 import MessageContent from "./MessageContent.jsx";
 import MetricsDashboard from "./MetricsDashboard.jsx";
+import { VoiceRecorder, isVoiceSupported } from "./voiceInput.js";
 
 const ADMIN_HASH = "#/admin";
 
@@ -173,6 +174,12 @@ export default function App() {
   const endRef = useRef(null);
   /** 递增后使进行中的 send 忽略结果，避免清空后旧回复写回 */
   const chatEpochRef = useRef(0);
+
+  // 语音输入
+  const [voiceState, setVoiceState] = useState("idle"); // idle | recording | transcribing
+  const [voiceError, setVoiceError] = useState("");
+  const voiceSupported = useRef(isVoiceSupported()).current;
+  const recorderRef = useRef(null);
 
   // 加载 Agent 列表
   const loadAgents = useCallback(async () => {
@@ -405,6 +412,56 @@ export default function App() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
+  // 开始录音
+  const startVoice = async () => {
+    if (voiceState !== "idle" || loading) return;
+    setVoiceError("");
+    try {
+      const rec = new VoiceRecorder();
+      await rec.start();
+      recorderRef.current = rec;
+      setVoiceState("recording");
+    } catch (err) {
+      // 多为用户拒绝麦克风权限，或 WebView 不支持
+      setVoiceError(
+        err?.name === "NotAllowedError"
+          ? "麦克风权限被拒绝，请在浏览器允许后重试"
+          : "无法开始录音（当前环境可能不支持，如微信内置浏览器）"
+      );
+      setVoiceState("idle");
+      recorderRef.current = null;
+    }
+  };
+
+  // 停止录音 → 识别 → 填入输入框（追加，可编辑后再发）
+  const stopVoice = async () => {
+    if (voiceState !== "recording") return;
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    setVoiceState("transcribing");
+    try {
+      const audio = await rec.stop();
+      if (!audio) { setVoiceState("idle"); return; }
+      const resp = await fetch("/api/asr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setVoiceError(data.error || "识别失败，请重试");
+      } else if (data.text) {
+        setInput((prev) => (prev ? `${prev} ${data.text}` : data.text));
+      } else {
+        setVoiceError("没听清，请靠近麦克风再说一遍");
+      }
+    } catch (err) {
+      setVoiceError(`识别出错：${err?.message || "请重试"}`);
+    } finally {
+      setVoiceState("idle");
+    }
+  };
+
   if (booting) {
     return <div className="boot">加载 Agent 配置中…</div>;
   }
@@ -597,16 +654,46 @@ export default function App() {
                   </div>
                 )}
 
+                {voiceError && <div className="voice-error">{voiceError}</div>}
                 <div className="composer">
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={onKey}
-                    placeholder={agent.placeholder}
+                    placeholder={
+                      voiceState === "recording"
+                        ? "正在聆听…点停止结束"
+                        : voiceState === "transcribing"
+                        ? "识别中…"
+                        : agent.placeholder
+                    }
                     rows={1}
-                    disabled={loading}
+                    disabled={loading || voiceState !== "idle"}
                   />
-                  <button className="send" onClick={() => send()} disabled={loading || !input.trim()}>
+                  {voiceSupported && (
+                    <button
+                      type="button"
+                      className={`mic-btn${voiceState === "recording" ? " recording" : ""}`}
+                      onClick={
+                        voiceState === "idle"
+                          ? startVoice
+                          : voiceState === "recording"
+                          ? stopVoice
+                          : undefined
+                      }
+                      disabled={loading || voiceState === "transcribing"}
+                      title={
+                        voiceState === "recording"
+                          ? "停止并识别"
+                          : voiceState === "transcribing"
+                          ? "识别中…"
+                          : "语音输入"
+                      }
+                    >
+                      {voiceState === "recording" ? "■" : voiceState === "transcribing" ? "…" : "🎤"}
+                    </button>
+                  )}
+                  <button className="send" onClick={() => send()} disabled={loading || !input.trim() || voiceState !== "idle"}>
                     发送
                   </button>
                 </div>

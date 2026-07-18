@@ -1736,3 +1736,48 @@ body {
   border-color: color-mix(in srgb, #c0a15f 28%, var(--line));
   background: color-mix(in srgb, #c0a15f 4%, var(--panel-2));
 }
+
+/* ==================== 语音输入 ==================== */
+.mic-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.mic-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--accent);
+}
+.mic-btn:disabled { opacity: .5; cursor: default; }
+/* 录音中：红色 + 呼吸 */
+.mic-btn.recording {
+  color: #fff;
+  background: #c45c4a;
+  border-color: #c45c4a;
+  animation: mic-pulse 1.3s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(196, 92, 74, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(196, 92, 74, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-btn.recording { animation: none; }
+}
+.voice-error {
+  margin: 0 36px 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #8b3a32;
+  background: color-mix(in srgb, #c45c4a 10%, var(--panel-2));
+  border: 1px solid color-mix(in srgb, #c45c4a 35%, var(--line));
+}
